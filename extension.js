@@ -110,7 +110,7 @@ const monitor_provider = {
 }
 monitor_provider.onDidChangeTreeData = monitor_provider._onDidChangeTreeData.event;
 
-
+// TODO: Rework the whole thing to support multiple windows per connection
 
 var /*TODO*/ process_connection = null;
 var /*TODO*/ data_continuation = null;
@@ -1054,7 +1054,7 @@ function activate(context) {
         const data = Buffer.alloc(9);
         data.fill(0);
         data[0] = 4;
-        data[1] = parseInt(id);
+        data[1] = 0;
         data[2] = 1;
         const b64 = data.toString("base64");
         connection.sendRaw("!CPC000C" + b64 + ("0000000" + crc32(connection.useBinaryChecksum ? data.toString("binary") : b64).toString(16)).slice(-8) + "\n\n", "utf8");
