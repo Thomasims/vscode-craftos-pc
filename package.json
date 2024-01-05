@@ -32,7 +32,11 @@
 		"commands": [
 			{
 				"command": "craftos-pc.open",
-				"title": "CraftOS-PC: Start Session"
+				"title": "CraftOS-PC: Start Session",
+				"icon": {
+					"light": "media/add-light.svg",
+					"dark": "media/add-dark.svg"
+				}
 			},
 			{
 				"command": "craftos-pc.open-websocket",
@@ -72,7 +76,7 @@
 			},
 			{
 				"command": "craftos-pc.close",
-				"title": "CraftOS-PC: Close Session",
+				"title": "CraftOS-PC: Close All",
 				"icon": {
 					"light": "media/close-light.svg",
 					"dark": "media/close-dark.svg"
@@ -145,14 +149,27 @@
 			],
 			"view/title": [
 				{
-					"command": "craftos-pc.open-config",
+					"command": "craftos-pc.open",
 					"when": "view == craftos-computers",
 					"group": "navigation@1"
 				},
 				{
-					"command": "craftos-pc.close",
+					"command": "craftos-pc.open-config",
 					"when": "view == craftos-computers",
 					"group": "navigation@2"
+				},
+				{
+					"command": "craftos-pc.close",
+					"when": "view == craftos-computers",
+					"group": "navigation@3"
+				},
+				{
+					"command": "craftos-pc.open-websocket",
+					"when": "view == craftos-computers"
+				},
+				{
+					"command": "craftos-pc.open-new-remote",
+					"when": "view == craftos-computers"
 				}
 			],
 			"editor/title": [
