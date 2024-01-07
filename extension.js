@@ -1,158 +1,1259 @@
-const child_process = require('child_process');
-const { SIGINT } = require('constants');
-const fs = require('fs');
-const https = require('https');
-const os = require('os');
-const path = require('path');
-const process = require('process');
-const semver = require('semver');
-const URL = require('url').URL;
-const vscode = require('vscode');
-const vsls = require('vsls');
-const WebSocket = require('ws');
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/******/ 	var __webpack_modules__ = ({
 
-var windows = {};
-var crcTable = null;
-var extcontext = null;
-/** @type vscode.OutputChannel */
-var log = {appendLine: () => {}};
+/***/ "./src/connection.ts":
+/*!***************************!*\
+  !*** ./src/connection.ts ***!
+  \***************************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
-function makeCRCTable() {
-    let c;
-    let crcTable = [];
-    for (let n = 0; n < 256; n++) {
-        c = n;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-        crcTable[n] = c;
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-    return crcTable;
-}
-
-function crc32(str) {
-    crcTable = crcTable || makeCRCTable();
-    let crc = 0 ^ (-1);
-    for (let i = 0; i < str.length; i++) {
-        crc = (crc >>> 8) ^ crcTable[(crc ^ str.charCodeAt(i)) & 0xFF];
-    }
-    return (crc ^ (-1)) >>> 0;
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
 };
-
-function bufferstream(str) {
-    let retval = {}
-    retval.pos = 0
-    retval.str = str
-    retval.readUInt64 = function() {
-        let r = Number(this.str.readBigUInt64LE(this.pos));
-        this.pos += 8;
-        return r;
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CraftConnection = void 0;
+const window_1 = __webpack_require__(/*! ./window */ "./src/window.ts");
+const packet_1 = __webpack_require__(/*! ./packet */ "./src/packet.ts");
+const utils_1 = __webpack_require__(/*! ./utils */ "./src/utils.ts");
+const globals_1 = __webpack_require__(/*! ./globals */ "./src/globals.ts");
+const child_process_1 = __webpack_require__(/*! child_process */ "child_process");
+const vscode = __importStar(__webpack_require__(/*! vscode */ "vscode"));
+const ws_1 = __importDefault(__webpack_require__(/*! ws */ "ws"));
+const events_1 = __importDefault(__webpack_require__(/*! events */ "events"));
+class CraftConnection extends events_1.default {
+    constructor(id) {
+        super();
+        this.id = id;
+        this.gotMessage = false;
+        this.nextDataRequestID = 0;
+        this.dataRequestCallbacks = new Map();
+        this.windows = new Map();
+        this.useBinaryChecksum = false;
+        this.retryChecksum = true;
+        this.supportsFilesystem = false;
+        this.isVersion11 = false;
+        this.isRemote = false;
     }
-    retval.readUInt32 = function() {
-        let r = this.str.readUInt32LE(this.pos);
-        this.pos += 4;
-        return r;
+    send(packet) {
+        this.socket.write(packet.wrap({
+            binaryChecksum: this.useBinaryChecksum,
+            extended: this.isVersion11,
+        }));
     }
-    retval.readUInt16 = function() {
-        let r = this.str.readUInt16LE(this.pos);
-        this.pos += 2;
-        return r;
+    disconnect() {
+        this.send(packet_1.CraftPacketTerminalChange.new({ type2: packet_1.TerminalChangeType.QUIT }));
+        this.socket.disconnect();
     }
-    retval.get = function() {
-        return this.str.readUInt8(this.pos++);
-    };
-    retval.putback = function() {this.pos--;}
-    return retval;
+    kill() {
+        this.removeWindows();
+        this.socket.kill();
+    }
+    closeWindows() {
+        for (const window of this.windows.values())
+            window.close();
+    }
+    closeWindow(id) {
+        this.windows.get(id)?.close();
+    }
+    openWindow(id) {
+        this.windows.get(id)?.open();
+    }
+    removeWindows() {
+        this.closeWindows();
+        this.windows.clear();
+        this.emit('windows');
+        globals_1.ext.connections.delete(this.id);
+    }
+    removeWindow(id) {
+        this.closeWindow(id);
+        this.windows.delete(id);
+        this.emit('windows');
+    }
+    newWindow(id) {
+        if (!this.windows.has(id)) {
+            const window = new window_1.CraftWindow(this, id);
+            this.windows.set(id, window);
+            window.open();
+            window.on('type_change', () => this.emit('windows'));
+            this.emit('windows');
+            return window;
+        }
+    }
+    processChunk(chunk) {
+        if (typeof chunk === "string")
+            chunk = Buffer.from(chunk, "utf8");
+        if (this.dataContinuation) {
+            chunk = Buffer.concat([this.dataContinuation, chunk]);
+            delete this.dataContinuation;
+        }
+        while (chunk.length > 0) {
+            const start = chunk.indexOf(33); // Seek to '!'
+            if (start === -1)
+                return;
+            chunk = chunk.subarray(start);
+            const magic = chunk.subarray(0, 4).toString();
+            let off;
+            if (magic === "!CPC")
+                off = 8;
+            else if (magic === "!CPD" && this.isVersion11)
+                off = 16;
+            else
+                return;
+            const size = parseInt(chunk.subarray(4, off).toString(), 16);
+            if (size > chunk.length - off - 8) {
+                this.dataContinuation = chunk;
+                return;
+            }
+            const data = Buffer.from(chunk.subarray(off, size + off).toString(), "base64");
+            const goodChecksum = parseInt(chunk.subarray(size + off, size + off + 8).toString(), 16);
+            const dataChecksum = (0, utils_1.crc32)(this.useBinaryChecksum ? data.toString("binary") : chunk.subarray(off, size + off).toString());
+            chunk = chunk.subarray(size + off + 8);
+            if (goodChecksum !== dataChecksum) {
+                globals_1.ext.log.appendLine("Bad checksum: expected " + goodChecksum.toString(16) + ", got " + dataChecksum.toString(16));
+                if (this.retryChecksum) {
+                    const otherDataChecksum = (0, utils_1.crc32)(this.useBinaryChecksum ? chunk.subarray(off, size + off).toString() : data.toString("binary"));
+                    if (goodChecksum !== otherDataChecksum) {
+                        this.retryChecksum = false;
+                        continue;
+                    }
+                    globals_1.ext.log.appendLine("Checksum matched in other mode, switching.");
+                    this.useBinaryChecksum = !this.useBinaryChecksum;
+                }
+                else {
+                    continue;
+                }
+            }
+            this.retryChecksum = false;
+            this.handlePacket(packet_1.CraftPacket.from(data));
+        }
+    }
+    handlePacket(packet) {
+        switch (packet.type) {
+            case packet_1.CraftPacketType.TERMINAL_CONTENTS:
+                this.handleTerminalContentsPacket(packet);
+                break;
+            case packet_1.CraftPacketType.TERMINAL_CHANGE:
+                this.handleTerminalChangePacket(packet);
+                break;
+            case packet_1.CraftPacketType.SHOW_MESSAGE:
+                this.handleShowMessagePacket(packet);
+                break;
+            case packet_1.CraftPacketType.VERSION_SUPPORT:
+                this.handleVersionSupportPacket(packet);
+                break;
+            case packet_1.CraftPacketType.FILE_RESPONSE:
+                this.handleFileResponsePacket(packet);
+                break;
+            case packet_1.CraftPacketType.FILE_DATA:
+                this.handleFileDataPacket(packet);
+                break;
+        }
+        this.gotMessage = true;
+    }
+    handleTerminalContentsPacket(packet) {
+        this.windows.get(packet.window)?.updateTerm(packet);
+    }
+    handleTerminalChangePacket(packet) {
+        if (!this.gotMessage)
+            this.send(packet_1.CraftPacketVersionSupport.new({ binaryChecksum: true, supportFilesystem: true }));
+        switch (packet.type2) {
+            case packet_1.TerminalChangeType.UPDATE:
+                if (this.windows.has(packet.window)) {
+                    this.windows.get(packet.window).updateTerm(packet);
+                }
+                else {
+                    this.newWindow(packet.window).updateTerm(packet);
+                }
+                break;
+            case packet_1.TerminalChangeType.CLOSE:
+                if (this.windows.has(packet.window)) {
+                    this.removeWindow(packet.window);
+                }
+                break;
+            case packet_1.TerminalChangeType.QUIT:
+                if (this.isRemote) {
+                    this.socket.write("\n");
+                    this.socket.disconnect();
+                }
+                else {
+                    this.socket.kill();
+                }
+                return;
+        }
+    }
+    handleShowMessagePacket(packet) {
+        switch (packet.kind) {
+            case "unknown":
+            case "info":
+                vscode.window.showInformationMessage("CraftOS-PC: " + packet.title + ": " + packet.message);
+                break;
+            case "warning":
+                vscode.window.showWarningMessage("CraftOS-PC: " + packet.title + ": " + packet.message);
+                break;
+            case "error":
+                vscode.window.showErrorMessage("CraftOS-PC: " + packet.title + ": " + packet.message);
+                break;
+        }
+    }
+    handleVersionSupportPacket(packet) {
+        this.isVersion11 = true;
+        this.useBinaryChecksum = packet.binaryChecksum;
+        this.supportsFilesystem = packet.supportFilesystem;
+    }
+    handleFileResponsePacket(packet) {
+        if (!this.dataRequestCallbacks.has(packet.id)) {
+            globals_1.ext.log.appendLine("Got stray response for request ID " + packet.id + ", ignoring.");
+            return;
+        }
+        const callback = this.dataRequestCallbacks.get(packet.id);
+        if (packet.isError)
+            callback(undefined, packet.error || "Operation failed");
+        else
+            callback(packet);
+    }
+    handleFileDataPacket(packet) {
+        if (!this.dataRequestCallbacks.has(packet.id)) {
+            globals_1.ext.log.appendLine("Got stray response for request ID " + packet.id + ", ignoring.");
+            return;
+        }
+        const callback = this.dataRequestCallbacks.get(packet.id);
+        if (packet.isError)
+            callback(undefined, packet.data.toString());
+        else
+            callback(packet);
+    }
+    queueDataRequest(packet, data) {
+        const requestID = this.nextDataRequestID;
+        this.nextDataRequestID = (this.nextDataRequestID + 1) & 0xff;
+        const isWrite = (packet.type2 & 0xf1) === 0x11;
+        packet.id = requestID;
+        this.send(packet);
+        if (isWrite) {
+            this.send(packet_1.CraftPacketFileData.new({ id: requestID, data, window: packet.window }));
+        }
+        return new Promise((resolve, reject) => {
+            const tid = setTimeout(() => {
+                this.dataRequestCallbacks.delete(requestID);
+                reject("Timeout");
+            });
+            this.dataRequestCallbacks.set(requestID, (data, err) => {
+                clearTimeout(tid);
+                this.dataRequestCallbacks.delete(requestID);
+                if (data)
+                    resolve(data);
+                else
+                    reject(err);
+            });
+        });
+    }
+    static fromProcess(id, extraArgs) {
+        const exePath = (0, utils_1.getExecutable)();
+        if (!exePath)
+            return null;
+        const connection = new CraftConnection(id);
+        globals_1.ext.connections.set(id, connection);
+        connection.isRemote = false;
+        const args = ["--raw"];
+        const additionalArguments = (0, utils_1.getExtensionSetting)("additionalArguments");
+        if (additionalArguments !== null) {
+            args.push(...additionalArguments.split(" "));
+        }
+        const dataPath = (0, utils_1.getExtensionSetting)("dataPath");
+        if (dataPath !== null) {
+            args.push("-d", dataPath);
+        }
+        if (extraArgs) {
+            args.push(...extraArgs);
+        }
+        globals_1.ext.log.appendLine("Running: " + exePath + " " + args.join(" "));
+        try {
+            const process = (0, child_process_1.spawn)(exePath, args, { windowsHide: true });
+            process.on("error", () => {
+                vscode.window.showErrorMessage("The CraftOS-PC worker process could not be launched. Check the path to the executable in the settings.");
+                connection.removeWindows();
+            });
+            process.on("exit", (code) => {
+                vscode.window.showInformationMessage(`The CraftOS-PC worker process exited with code ${code}.`);
+                connection.removeWindows();
+            });
+            process.on("disconnect", () => {
+                vscode.window.showErrorMessage(`The CraftOS-PC worker process was disconnected from the window.`);
+                connection.removeWindows();
+            });
+            process.on("close", () => {
+                //vscode.window.showInformationMessage(`The CraftOS-PC worker process closed all IO streams with code ${code}.`)
+                connection.removeWindows();
+            });
+            process.stdout.on("data", (data) => connection.processChunk(data));
+            process.stderr.on("data", (data) => globals_1.ext.log.appendLine(data.toString()));
+            connection.socket = {
+                disconnect: () => process.disconnect(),
+                kill: () => process.kill(),
+                write: (data) => process.stdin.write(data, "utf8"),
+            };
+        }
+        catch (e) {
+            vscode.window.showErrorMessage("The CraftOS-PC worker process could not be launched. Check the path to the executable in the settings.");
+            globals_1.ext.log.appendLine(e);
+            return;
+        }
+        connection.send(packet_1.CraftPacketVersionSupport.new({
+            binaryChecksum: true,
+            supportFilesystem: true,
+        }));
+        vscode.window.showInformationMessage("A new CraftOS-PC worker process has been started.");
+        connection.newWindow(0);
+        return connection;
+    }
+    static fromWebsocket(id, url) {
+        const connection = new CraftConnection(id);
+        globals_1.ext.connections.set(id, connection);
+        connection.isRemote = true;
+        globals_1.ext.log.appendLine("Connecting to: " + url);
+        const rawSocket = new ws_1.default(url);
+        connection.socket = {
+            disconnect: () => rawSocket.close(),
+            kill: () => rawSocket.close(),
+            write: (data) => {
+                for (let i = 0; i < data.length; i += 65530)
+                    rawSocket.send(data.substring(i, Math.min(i + 65530, data.length)));
+            },
+        };
+        rawSocket.on("open", () => {
+            connection.send(packet_1.CraftPacketVersionSupport.new({
+                binaryChecksum: true,
+                supportFilesystem: true,
+                requestAllWindows: true,
+            }));
+            vscode.window.showInformationMessage("Successfully connected to the WebSocket server.");
+        });
+        rawSocket.on("error", (e) => {
+            if (e.message.match("certificate has expired"))
+                vscode.window
+                    .showErrorMessage("A bug in VS Code is causing the connection to fail. Please go to https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error to fix it.", "Open Page", "OK")
+                    .then((res) => {
+                    if (res === "OK")
+                        return;
+                    vscode.env.openExternal(vscode.Uri.parse("https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error"));
+                });
+            else
+                vscode.window.showErrorMessage("An error occurred while connecting to the server: " + e.message);
+            connection.removeWindows();
+        });
+        rawSocket.on("close", () => {
+            vscode.window.showInformationMessage("Disconnected from the WebSocket server.");
+            connection.removeWindows();
+        });
+        rawSocket.on("message", (data) => connection.processChunk(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data)));
+        return connection;
+    }
 }
+exports.CraftConnection = CraftConnection;
 
+
+/***/ }),
+
+/***/ "./src/globals.ts":
+/*!************************!*\
+  !*** ./src/globals.ts ***!
+  \************************/
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FindWindow = exports.FindConnection = exports.ext = void 0;
+exports.ext = {
+    connections: new Map(),
+};
+function FindConnection(globalID) {
+    const sep = globalID.indexOf("@");
+    if (sep !== -1)
+        globalID = globalID.substring(sep + 1);
+    return exports.ext.connections.get(globalID);
+}
+exports.FindConnection = FindConnection;
+function FindWindow(globalID) {
+    const sep = globalID.indexOf("@");
+    if (sep === -1)
+        return;
+    return exports.ext.connections.get(globalID.substring(sep + 1))?.windows.get(parseInt(globalID.substring(0, sep)));
+}
+exports.FindWindow = FindWindow;
+
+
+/***/ }),
+
+/***/ "./src/index.ts":
+/*!**********************!*\
+  !*** ./src/index.ts ***!
+  \**********************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.deactivate = exports.activate = void 0;
+console.log("preimport");
+const vscode = __importStar(__webpack_require__(/*! vscode */ "vscode"));
+const connection_1 = __webpack_require__(/*! ./connection */ "./src/connection.ts");
+const globals_1 = __webpack_require__(/*! ./globals */ "./src/globals.ts");
+const view_terminals_1 = __webpack_require__(/*! ./view_terminals */ "./src/view_terminals.ts");
+const https_1 = __importDefault(__webpack_require__(/*! https */ "https"));
+const utils_1 = __webpack_require__(/*! ./utils */ "./src/utils.ts");
+const commands = {};
+function activate(context) {
+    globals_1.ext.context = context;
+    globals_1.ext.log = vscode.window.createOutputChannel("CraftOS-PC");
+    globals_1.ext.computer_provider = new view_terminals_1.ComputerProvider();
+    globals_1.ext.monitor_provider = new view_terminals_1.MonitorProvider();
+    vscode.window.createTreeView("craftos-computers", { treeDataProvider: globals_1.ext.computer_provider });
+    vscode.window.createTreeView("craftos-monitors", { treeDataProvider: globals_1.ext.monitor_provider });
+    for (const name in commands) {
+        context.subscriptions.push(vscode.commands.registerCommand(name, commands[name]));
+    }
+}
+exports.activate = activate;
+function deactivate() {
+    for (const connection of globals_1.ext.connections.values()) {
+        connection.kill();
+    }
+}
+exports.deactivate = deactivate;
+function connectToProcess(extraArgs) {
+    const nextID = [...globals_1.ext.connections.keys()].reduce((prev, id) => (id.startsWith("local-") ? Math.max(parseInt(id.substring(6)), prev) : prev), 0);
+    if (nextID > 0) {
+        extraArgs = extraArgs || [];
+        extraArgs.push('--id', nextID.toFixed(0));
+    }
+    const connection = connection_1.CraftConnection.fromProcess("local-" + nextID, extraArgs);
+    connection.on("windows", () => {
+        globals_1.ext.computer_provider.fire(null);
+        globals_1.ext.monitor_provider.fire(null);
+    });
+    console.log(connection);
+}
+function connectToWebSocket(url) {
+    const connection = connection_1.CraftConnection.fromWebsocket("websocket", url);
+    connection.on("windows", () => {
+        globals_1.ext.computer_provider.fire(null);
+        globals_1.ext.monitor_provider.fire(null);
+    });
+    console.log(connection);
+}
+commands["craftos-pc.open"] = () => connectToProcess();
 function validateURL(str) {
     try {
         let url = new URL(str);
         return url.protocol.toLowerCase() == "ws:" || url.protocol.toLowerCase() == "wss:";
-    } catch (e) {return false;}
+    }
+    catch (e) {
+        return false;
+    }
 }
-
-const computer_provider = {
-    getChildren: element => {
-        if ((element === undefined || element === null)) {
-            let arr = [];
-            for (let w in windows) if (!windows[w].isMonitor) arr.push({title: windows[w].term.title, id: w});
-            return arr;
-        } else return null;
-    },
-    getTreeItem: element => {
-        let r = new vscode.TreeItem(element.title);
-        r.iconPath = vscode.Uri.file(path.join(extcontext.extensionPath, 'media/computer.svg'));
-        r.command = {command: "craftos-pc.open-window", title: "CraftOS-PC: Open Window", arguments: [element]};
-        const connection = connections.get(parseInt(element.id));
-        if (connection && connection.supportsFilesystem) r.contextValue = "data-available";
-        return r;
-    },
-    _onDidChangeTreeData: new vscode.EventEmitter(),
-};
-computer_provider.onDidChangeTreeData = computer_provider._onDidChangeTreeData.event;
-
-const connections = new Map();
-const monitor_provider = {
-    getChildren: element => {
-        if ((element === undefined || element === null)) {
-            let arr = [];
-            for (let w in windows) if (windows[w].isMonitor) arr.push({title: windows[w].term.title, id: w});
-            return arr;
+commands["craftos-pc.open-websocket"] = async (url) => {
+    if (typeof url === "string")
+        return connectToWebSocket(url);
+    let wsHistory = globals_1.ext.context.globalState.get("JackMacWindows.craftos-pc/websocket-history", [""]);
+    let quickPick = vscode.window.createQuickPick();
+    quickPick.items = wsHistory.map((val) => {
+        return { label: val };
+    });
+    quickPick.title = "Enter the WebSocket URL:";
+    quickPick.placeholder = "wss://";
+    quickPick.canSelectMany = false;
+    quickPick.onDidChangeValue(() => {
+        wsHistory[0] = quickPick.value;
+        quickPick.items = wsHistory.map((val) => {
+            return { label: val };
+        });
+    });
+    quickPick.onDidAccept(() => {
+        let str = quickPick.selectedItems[0].label;
+        if (!validateURL(str))
+            vscode.window.showErrorMessage("The URL you entered is not valid.");
+        else {
+            wsHistory[0] = str;
+            if (wsHistory.slice(1).includes(str))
+                wsHistory.splice(wsHistory.slice(1).indexOf(str) + 1, 1);
+            wsHistory.unshift("");
+            globals_1.ext.context.globalState.update("JackMacWindows.craftos-pc/websocket-history", wsHistory);
+            connectToWebSocket(str);
         }
-        else return null;
-    },
-    getTreeItem: element => {
-        let r = new vscode.TreeItem(element.title);
-        r.iconPath = vscode.Uri.file(path.join(extcontext.extensionPath, 'media/monitor.svg'));
-        r.command = {command: "craftos-pc.open-window", title: "CraftOS-PC: Open Window", arguments: [element]};
-        return r;
-    },
-    _onDidChangeTreeData: new vscode.EventEmitter(),
+    });
+    quickPick.show();
+};
+commands["craftos-pc.clear-history"] = () => globals_1.ext.context.globalState.update("JackMacWindows.craftos-pc/websocket-history", [""]);
+let didShowBetaMessage = false;
+commands["craftos-pc.open-new-remote"] = () => {
+    if (!didShowBetaMessage) {
+        vscode.window.showWarningMessage("remote.craftos-pc.cc is currently in beta. Be aware that things may not work as expected. If you run into issues, please report them [on GitHub](https://github.com/MCJack123/remote.craftos-pc.cc/issues). If things break, use Shift+Ctrl+P (Shift+Cmd+P on Mac), then type 'reload window' and press Enter.");
+        didShowBetaMessage = true;
+    }
+    https_1.default
+        .get("https://remote.craftos-pc.cc/new", (res) => {
+        if (Math.floor(res.statusCode / 100) !== 2) {
+            vscode.window.showErrorMessage("Could not connect to remote.craftos-pc.cc: HTTP " + res.statusCode);
+            res.resume();
+            return;
+        }
+        res.setEncoding("utf8");
+        let id = "";
+        res.on("data", (chunk) => (id += chunk));
+        res.on("end", () => {
+            vscode.env.clipboard.writeText("wget run https://remote.craftos-pc.cc/server.lua " + id);
+            vscode.window.showInformationMessage("A command has been copied to the clipboard. Paste that into the ComputerCraft computer to establish the connection.");
+            connectToWebSocket("wss://remote.craftos-pc.cc/" + id);
+        });
+    })
+        .on("error", (e) => {
+        if (e.message.match("certificate has expired"))
+            vscode.window
+                .showErrorMessage("A bug in VS Code is causing the connection to fail. Please go to https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error to fix it.", "Open Page", "OK")
+                .then((res) => {
+                if (res === "OK")
+                    return;
+                vscode.env.openExternal(vscode.Uri.parse("https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error"));
+            });
+        else
+            vscode.window.showErrorMessage("Could not connect to remote.craftos-pc.cc: " + e.message);
+    });
+};
+commands["craftos-pc.open-window"] = (obj) => {
+    if (typeof obj === "object")
+        return (0, globals_1.FindWindow)(obj.globalID)?.open();
+    vscode.window
+        .showInputBox({
+        prompt: "Enter the window ID:",
+        validateInput: (str) => (isNaN(parseInt(str)) ? "Invalid number" : null),
+    })
+        .then((id) => (0, globals_1.FindWindow)(id)?.open());
+};
+commands["craftos-pc.open-config"] = () => {
+    if ((0, utils_1.getDataPath)() === null) {
+        vscode.window.showErrorMessage("Please set the path to the CraftOS-PC data directory manually.");
+        return;
+    }
+    vscode.commands.executeCommand("vscode.open", vscode.Uri.file((0, utils_1.getDataPath)() + "/config/global.json"));
+};
+commands['craftos-pc.close'] = () => {
+    for (const connection of globals_1.ext.connections.values()) {
+        connection.disconnect();
+    }
+};
+commands["craftos-pc.close-window"] = async (obj) => {
+    const id = typeof obj === 'object' ? obj.globalID : await vscode.window.showInputBox({ prompt: "Enter the window ID:" });
+    (0, globals_1.FindWindow)(id)?.close();
+};
+commands["craftos-pc.kill"] = async (obj) => {
+    const id = typeof obj === 'object' ? obj.globalID : await vscode.window.showInputBox({ prompt: "Enter the window ID:" });
+    (0, globals_1.FindConnection)(id)?.kill();
+};
+commands["craftos-pc.run-file"] = path => {
+    if (!path) {
+        if (vscode.window.activeTextEditor === undefined || vscode.window.activeTextEditor.document.uri.scheme !== "file") {
+            vscode.window.showErrorMessage("Please open or save a file on disk before using this command.");
+            return;
+        }
+        path = vscode.window.activeTextEditor.document.uri.fsPath;
+    }
+    else if (typeof path === "object" && path instanceof vscode.Uri) {
+        if (path.scheme !== "file") {
+            vscode.window.showErrorMessage("Please open or save a file on disk before using this command.");
+            return;
+        }
+        path = path.fsPath;
+    }
+    return connectToProcess(["--script", path]);
+};
+
+
+/***/ }),
+
+/***/ "./src/packet.ts":
+/*!***********************!*\
+  !*** ./src/packet.ts ***!
+  \***********************/
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.newPacket = exports.CraftPacketSpeakerSound = exports.CraftPacketFileData = exports.CraftPacketFileResponse = exports.CraftPacketFileRequest = exports.FileRequestType = exports.CraftPacketVersionSupport = exports.CraftPacketShowMessage = exports.CraftPacketTerminalChange = exports.TerminalChangeType = exports.CraftPacketGenericEvent = exports.CraftPacketMouseEvent = exports.MouseEventType = exports.CraftPacketKeyEvent = exports.CraftPacketTerminalContents = exports.CraftPacketRaw = exports.CraftPacket = exports.CraftPacketType = void 0;
+const utils_1 = __webpack_require__(/*! ./utils */ "./src/utils.ts");
+var CraftPacketType;
+(function (CraftPacketType) {
+    CraftPacketType[CraftPacketType["TERMINAL_CONTENTS"] = 0] = "TERMINAL_CONTENTS";
+    CraftPacketType[CraftPacketType["KEY_EVENT"] = 1] = "KEY_EVENT";
+    CraftPacketType[CraftPacketType["MOUSE_EVENT"] = 2] = "MOUSE_EVENT";
+    CraftPacketType[CraftPacketType["GENERIC_EVENT"] = 3] = "GENERIC_EVENT";
+    CraftPacketType[CraftPacketType["TERMINAL_CHANGE"] = 4] = "TERMINAL_CHANGE";
+    CraftPacketType[CraftPacketType["SHOW_MESSAGE"] = 5] = "SHOW_MESSAGE";
+    CraftPacketType[CraftPacketType["VERSION_SUPPORT"] = 6] = "VERSION_SUPPORT";
+    CraftPacketType[CraftPacketType["FILE_REQUEST"] = 7] = "FILE_REQUEST";
+    CraftPacketType[CraftPacketType["FILE_RESPONSE"] = 8] = "FILE_RESPONSE";
+    CraftPacketType[CraftPacketType["FILE_DATA"] = 9] = "FILE_DATA";
+    CraftPacketType[CraftPacketType["SPEAKER_SOUND"] = 10] = "SPEAKER_SOUND";
+})(CraftPacketType || (exports.CraftPacketType = CraftPacketType = {}));
+class CraftPacket {
+    constructor() {
+        this.window = 0;
+    }
+    static from(buf) {
+        let packet = null;
+        switch (buf[0]) {
+            case CraftPacketType.TERMINAL_CONTENTS:
+                packet = new CraftPacketTerminalContents();
+                break;
+            case CraftPacketType.TERMINAL_CHANGE:
+                packet = new CraftPacketTerminalChange();
+                break;
+            case CraftPacketType.SHOW_MESSAGE:
+                packet = new CraftPacketShowMessage();
+                break;
+            case CraftPacketType.VERSION_SUPPORT:
+                packet = new CraftPacketVersionSupport();
+                break;
+            case CraftPacketType.FILE_RESPONSE:
+                packet = new CraftPacketFileResponse();
+                break;
+            case CraftPacketType.FILE_DATA:
+                packet = new CraftPacketFileData();
+                break;
+            case CraftPacketType.SPEAKER_SOUND:
+                packet = new CraftPacketSpeakerSound();
+                break;
+        }
+        if (packet) {
+            packet.read(buf);
+        }
+        return packet;
+    }
+    read(buf) {
+        this.type = buf[0];
+        this.window = buf[1];
+    }
+    write() {
+        const buf = Buffer.alloc(this.length + 2);
+        buf.fill(0);
+        buf[0] = this.type;
+        buf[1] = this.window;
+        return buf;
+    }
+    get length() {
+        return 2;
+    }
+    wrap(options) {
+        const data = this.write();
+        const b64 = data.toString("base64");
+        if (b64.length <= 0xffff) {
+            return ("!CPC" +
+                b64.length.toString(16).padStart(4, "0") +
+                b64 +
+                (0, utils_1.crc32)(options?.binaryChecksum ? data.toString("binary") : b64)
+                    .toString(16)
+                    .padStart(8, "0") +
+                "\n");
+        }
+        else {
+            if (!options?.extended)
+                throw new Error("Packet is too large");
+            return ("!CPD" +
+                b64.length.toString(16).padStart(12, "0") +
+                b64 +
+                (0, utils_1.crc32)(options?.binaryChecksum ? data.toString("binary") : b64)
+                    .toString(16)
+                    .padStart(8, "0") +
+                "\n");
+        }
+    }
 }
-monitor_provider.onDidChangeTreeData = monitor_provider._onDidChangeTreeData.event;
+exports.CraftPacket = CraftPacket;
+class CraftPacketRaw extends CraftPacket {
+    write() {
+        const buf = super.write();
+        this.data.copy(buf, 2);
+        return buf;
+    }
+    get length() {
+        return 2 + this.data.byteLength;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketRaw = CraftPacketRaw;
+// Server --> Client
+class CraftPacketTerminalContents extends CraftPacket {
+    static from(buf) {
+        const packet = new CraftPacketTerminalContents();
+        packet.read(buf);
+        return packet;
+    }
+    readRLE(target, width, height, buf) {
+        let offset = 0;
+        let c = 0;
+        let n = 0;
+        for (let y = 0; y < height; y++) {
+            target[y] = [];
+            for (let x = 0; x < width; x++) {
+                while (n <= 0) {
+                    c = buf[offset++];
+                    n = buf[offset++];
+                }
+                target[y][x] = c;
+                n--;
+            }
+        }
+        return offset;
+    }
+    read(buf) {
+        super.read(buf);
+        this.mode = buf[0x02];
+        this.blink = buf[0x03] === 1;
+        this.width = buf[0x04] | (buf[0x05] << 8);
+        this.height = buf[0x06] | (buf[0x07] << 8);
+        this.cursorX = buf[0x08] | (buf[0x09] << 8);
+        this.cursorY = buf[0x0a] | (buf[0x0b] << 8);
+        this.grayscale = buf[0x0c] === 1;
+        let bufCursor = 0x10;
+        if (this.mode === 0) {
+            this.screen = [];
+            this.colors = [];
+            bufCursor += this.readRLE(this.screen, this.width, this.height, buf.subarray(bufCursor));
+            bufCursor += this.readRLE(this.colors, this.width, this.height, buf.subarray(bufCursor));
+        }
+        else if (this.mode === 1 || this.mode === 2) {
+            this.pixels = [];
+            bufCursor += this.readRLE(this.pixels, this.width * 6, this.height * 9, buf.subarray(bufCursor));
+        }
+        this.palette = [];
+        const numPalette = this.mode < 2 ? 16 : 256;
+        for (let i = 0; i < numPalette; i++) {
+            this.palette[i] = {
+                r: buf[bufCursor++],
+                g: buf[bufCursor++],
+                b: buf[bufCursor++],
+            };
+        }
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketTerminalContents = CraftPacketTerminalContents;
+// Server <-- Client
+class CraftPacketKeyEvent extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.data = 0;
+        this.isDown = false;
+        this.isHeld = false;
+        this.isControl = false;
+    }
+    write() {
+        const buf = super.write();
+        let flags = (this.isDown ? 1 : 0) | (this.isHeld ? 2 : 0) | (this.isControl ? 4 : 0);
+        let data = this.data;
+        if (typeof data === "string") {
+            data = data.charCodeAt(0);
+            flags |= 8;
+        }
+        buf[0x02] = data;
+        buf[0x03] = flags;
+        return buf;
+    }
+    get length() {
+        return 4;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketKeyEvent = CraftPacketKeyEvent;
+var MouseEventType;
+(function (MouseEventType) {
+    MouseEventType[MouseEventType["MOUSE_DOWN"] = 0] = "MOUSE_DOWN";
+    MouseEventType[MouseEventType["MOUSE_UP"] = 1] = "MOUSE_UP";
+    MouseEventType[MouseEventType["MOUSE_SCROLL"] = 2] = "MOUSE_SCROLL";
+    MouseEventType[MouseEventType["MOUSE_DRAG"] = 3] = "MOUSE_DRAG";
+})(MouseEventType || (exports.MouseEventType = MouseEventType = {}));
+// Server <-- Client
+class CraftPacketMouseEvent extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.button = 0;
+        this.x = 0;
+        this.y = 0;
+    }
+    write() {
+        const buf = super.write();
+        buf[0x02] = this.event;
+        buf[0x03] = this.event === MouseEventType.MOUSE_SCROLL ? (this.scroll === "up" ? 0 : 1) : this.button;
+        buf.writeUint32LE(this.x, 0x04);
+        buf.writeUint32LE(this.y, 0x08);
+        return buf;
+    }
+    get length() {
+        return 12;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketMouseEvent = CraftPacketMouseEvent;
+// Server <-- Client
+// TODO
+class CraftPacketGenericEvent extends CraftPacket {
+    write() {
+        const buf = super.write();
+        return buf;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketGenericEvent = CraftPacketGenericEvent;
+var TerminalChangeType;
+(function (TerminalChangeType) {
+    TerminalChangeType[TerminalChangeType["UPDATE"] = 0] = "UPDATE";
+    TerminalChangeType[TerminalChangeType["CLOSE"] = 1] = "CLOSE";
+    TerminalChangeType[TerminalChangeType["QUIT"] = 2] = "QUIT";
+})(TerminalChangeType || (exports.TerminalChangeType = TerminalChangeType = {}));
+// Server <-> Client
+class CraftPacketTerminalChange extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.type2 = TerminalChangeType.UPDATE;
+        this.id = 0;
+        this.width = 0;
+        this.height = 0;
+        this.title = "";
+    }
+    read(buf) {
+        super.read(buf);
+        this.type2 = buf[0x02];
+        this.id = buf[0x03];
+        this.width = buf.readUInt16LE(0x04);
+        this.height = buf.readUInt16LE(0x06);
+        const titleEnd = buf.indexOf(0, 0x08);
+        this.title = new TextDecoder("utf8").decode(buf.subarray(0x08, titleEnd));
+    }
+    write() {
+        const buf = super.write();
+        buf[0x02] = this.type2;
+        buf[0x03] = this.id;
+        buf.writeUInt16LE(this.width, 0x04);
+        buf.writeUInt16LE(this.height, 0x06);
+        return buf;
+    }
+    get length() {
+        return 9;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketTerminalChange = CraftPacketTerminalChange;
+// Server --> Client
+class CraftPacketShowMessage extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.kind = "unknown";
+        this.title = "";
+        this.message = "";
+    }
+    read(buf) {
+        super.read(buf);
+        switch (buf.readUInt32LE(0x02)) {
+            case 0x10:
+                this.kind = "error";
+                break;
+            case 0x20:
+                this.kind = "warning";
+                break;
+            case 0x40:
+                this.kind = "info";
+                break;
+            default:
+                this.kind = "unknown";
+        }
+        const titleEnd = buf.indexOf(0, 0x06);
+        const messageEnd = buf.indexOf(0, titleEnd + 1);
+        const decoder = new TextDecoder("utf8");
+        this.title = decoder.decode(buf.subarray(0x06, titleEnd));
+        this.message = decoder.decode(buf.subarray(titleEnd + 1, messageEnd));
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketShowMessage = CraftPacketShowMessage;
+// Server <-> Client
+class CraftPacketVersionSupport extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.binaryChecksum = false;
+        this.supportFilesystem = false;
+        this.requestAllWindows = false;
+        this.supportSpeaker = false;
+    }
+    read(buf) {
+        super.read(buf);
+        const flags = buf.readUInt16LE(0x02);
+        this.binaryChecksum = (flags & 0x01) !== 0;
+        this.supportFilesystem = (flags & 0x02) !== 0;
+        this.requestAllWindows = (flags & 0x04) !== 0;
+        this.supportSpeaker = (flags & 0x08) !== 0;
+    }
+    write() {
+        const buf = super.write();
+        buf.writeUInt16LE((this.binaryChecksum ? 1 : 0) |
+            (this.supportFilesystem ? 2 : 0) |
+            (this.requestAllWindows ? 4 : 0) |
+            (this.supportSpeaker ? 8 : 0), 0x02);
+        return buf;
+    }
+    get length() {
+        return 4;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketVersionSupport = CraftPacketVersionSupport;
+var FileRequestType;
+(function (FileRequestType) {
+    FileRequestType[FileRequestType["EXISTS"] = 0] = "EXISTS";
+    FileRequestType[FileRequestType["IS_DIR"] = 1] = "IS_DIR";
+    FileRequestType[FileRequestType["IS_READONLY"] = 2] = "IS_READONLY";
+    FileRequestType[FileRequestType["GET_SIZE"] = 3] = "GET_SIZE";
+    FileRequestType[FileRequestType["GET_DRIVE"] = 4] = "GET_DRIVE";
+    FileRequestType[FileRequestType["GET_CAPACITY"] = 5] = "GET_CAPACITY";
+    FileRequestType[FileRequestType["GET_FREE_SPACE"] = 6] = "GET_FREE_SPACE";
+    FileRequestType[FileRequestType["LIST"] = 7] = "LIST";
+    FileRequestType[FileRequestType["ATTRIBUTES"] = 8] = "ATTRIBUTES";
+    FileRequestType[FileRequestType["FIND"] = 9] = "FIND";
+    FileRequestType[FileRequestType["MAKE_DIR"] = 10] = "MAKE_DIR";
+    FileRequestType[FileRequestType["DELETE"] = 11] = "DELETE";
+    FileRequestType[FileRequestType["COPY"] = 12] = "COPY";
+    FileRequestType[FileRequestType["MOVE"] = 13] = "MOVE";
+    FileRequestType[FileRequestType["OPEN"] = 16] = "OPEN";
+})(FileRequestType || (exports.FileRequestType = FileRequestType = {}));
+// Server <-- Client
+class CraftPacketFileRequest extends CraftPacket {
+    set path(val) {
+        this._path = new TextEncoder().encode(val);
+    }
+    set path2(val) {
+        this._path2 = new TextEncoder().encode(val);
+    }
+    write() {
+        const buf = super.write();
+        let t = this.type2;
+        if (t === FileRequestType.OPEN) {
+            t |= (this.isWrite ? 1 : 0) | (this.isAppend ? 2 : 0) | (this.isBinary ? 4 : 0);
+        }
+        buf[0x02] = t;
+        buf[0x03] = this.id;
+        if (this._path) {
+            Buffer.from(this._path).copy(buf, 0x04);
+            buf[0x04 + this._path.byteLength] = 0;
+            if (this._path2) {
+                Buffer.from(this._path2).copy(buf, 0x05 + this._path.byteLength);
+                buf[0x05 + this._path.byteLength + this._path2.byteLength] = 0;
+            }
+        }
+        return buf;
+    }
+    get length() {
+        return 6 + (this._path ? this._path.byteLength : 0) + (this._path2 ? this._path2.byteLength : 0);
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketFileRequest = CraftPacketFileRequest;
+// Server --> Client
+class CraftPacketFileResponse extends CraftPacket {
+    read(buf) {
+        super.read(buf);
+        this.type2 = buf[0x02];
+        this.id = buf[0x03];
+        switch (Math.min(this.type2, 16)) {
+            case FileRequestType.MAKE_DIR:
+            case FileRequestType.DELETE:
+            case FileRequestType.COPY:
+            case FileRequestType.MOVE:
+            case FileRequestType.OPEN:
+                const msgEnd = buf.indexOf(0, 0x04);
+                this.success = msgEnd === 0x04;
+                this.isError = !this.success;
+                if (!this.success)
+                    this.error = new TextDecoder("utf8").decode(buf.subarray(0x04, msgEnd));
+                break;
+            case FileRequestType.EXISTS:
+            case FileRequestType.IS_DIR:
+            case FileRequestType.IS_READONLY:
+                this.booleanResult = buf[0x04] === 2 ? null : !!buf[0x04];
+                this.isError = this.booleanResult === null;
+                break;
+            case FileRequestType.GET_SIZE:
+            case FileRequestType.GET_CAPACITY:
+            case FileRequestType.GET_FREE_SPACE:
+                this.integerResult = buf.readUInt32LE(0x04);
+                if (this.integerResult === 0xffffffff)
+                    this.integerResult = null;
+                this.isError = this.integerResult === null;
+                break;
+            case FileRequestType.GET_DRIVE:
+                const strEnd = buf.indexOf(0, 0x04);
+                this.stringResult = strEnd === 0x04 ? null : new TextDecoder("utf8").decode(buf.subarray(0x04, strEnd));
+                this.isError = this.stringResult === null;
+                break;
+            case FileRequestType.LIST:
+            case FileRequestType.FIND:
+                const count = buf.readUInt32LE(0x04);
+                if (count === 0xffffffff) {
+                    this.listResult = null;
+                    this.isError = true;
+                    break;
+                }
+                this.isError = false;
+                let offset = 0x08;
+                this.listResult = [];
+                const decoder = new TextDecoder("utf8");
+                for (let i = 0; i < count; i++) {
+                    const end = buf.indexOf(0, offset);
+                    this.listResult[i] = decoder.decode(buf.subarray(offset, end));
+                    offset = end + 1;
+                }
+                break;
+            case FileRequestType.ATTRIBUTES:
+                if (buf[0x1a] === 0) {
+                    const size = buf.readUInt32LE(0x04);
+                    const created = buf.readBigUint64LE(0x08).toString();
+                    const modified = buf.readBigUint64LE(0x10).toString();
+                    const isDir = !!buf[0x18];
+                    const isReadonly = !!buf[0x19];
+                    this.attributes = {
+                        size,
+                        created,
+                        modified,
+                        isDir,
+                        isReadonly,
+                    };
+                    this.isError = false;
+                }
+                else {
+                    this.attributes = null;
+                    this.isError = buf[0x1a] === 2;
+                }
+                break;
+        }
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketFileResponse = CraftPacketFileResponse;
+// Server <-> Client
+class CraftPacketFileData extends CraftPacket {
+    constructor() {
+        super(...arguments);
+        this.isError = false;
+    }
+    read(buf) {
+        super.read(buf);
+        this.isError = !!buf[0x02];
+        this.id = buf[0x03];
+        const length = buf.readUInt32LE(0x04);
+        this.data = buf.subarray(0x08, 0x08 + length);
+    }
+    write() {
+        const buf = super.write();
+        buf[0x02] = this.isError ? 1 : 0;
+        buf[0x03] = this.id;
+        buf.writeUInt32LE(this.data.byteLength);
+        this.data.copy(buf, 0x08);
+        return buf;
+    }
+    get length() {
+        return 8 + this.data.byteLength;
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketFileData = CraftPacketFileData;
+// Server --> Client
+// TODO
+class CraftPacketSpeakerSound extends CraftPacket {
+    read(buf) {
+        super.read(buf);
+    }
+    static new(data) {
+        return newPacket(this, data);
+    }
+}
+exports.CraftPacketSpeakerSound = CraftPacketSpeakerSound;
+const classToType = new Map();
+classToType.set(CraftPacketTerminalContents, CraftPacketType.TERMINAL_CONTENTS);
+classToType.set(CraftPacketKeyEvent, CraftPacketType.KEY_EVENT);
+classToType.set(CraftPacketMouseEvent, CraftPacketType.MOUSE_EVENT);
+classToType.set(CraftPacketGenericEvent, CraftPacketType.GENERIC_EVENT);
+classToType.set(CraftPacketTerminalChange, CraftPacketType.TERMINAL_CHANGE);
+classToType.set(CraftPacketShowMessage, CraftPacketType.SHOW_MESSAGE);
+classToType.set(CraftPacketVersionSupport, CraftPacketType.VERSION_SUPPORT);
+classToType.set(CraftPacketFileRequest, CraftPacketType.FILE_REQUEST);
+classToType.set(CraftPacketFileResponse, CraftPacketType.FILE_RESPONSE);
+classToType.set(CraftPacketFileData, CraftPacketType.FILE_DATA);
+classToType.set(CraftPacketSpeakerSound, CraftPacketType.SPEAKER_SOUND);
+function newPacket(clazz, data) {
+    const t = new clazz();
+    for (const key in data) {
+        t[key] = data[key];
+    }
+    if (classToType.has(clazz))
+        t.type = classToType.get(clazz);
+    return t;
+}
+exports.newPacket = newPacket;
 
-// TODO: Rework the whole thing to support multiple windows per connection
 
-var /*TODO*/ process_connection = null;
-var /*TODO*/ data_continuation = null;
-var /*TODO*/ nextDataRequestID = 0;
-var /*TODO*/ dataRequestCallbacks = {};
-var /*TODO*/ isVersion11 = false;
-var /*TODO*/ useBinaryChecksum = false;
-var /*TODO*/ supportsFilesystem = false;
-var /*TODO*/ gotMessage = false;
-var didShowBetaMessage = false;
-var processFeatures = {};
-/** @type vsls.LiveShare|null */
-var liveshare = null;
-/** @type vsls.SharedServiceProxy|null */
-var vslsClient = null;
-/** @type vsls.SharedService|null */
-var vslsServer = null;
+/***/ }),
 
+/***/ "./src/utils.ts":
+/*!**********************!*\
+  !*** ./src/utils.ts ***!
+  \**********************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.crc32 = exports.getExecutable = exports.getDataPath = exports.getExtensionSetting = exports.getSetting = void 0;
+const vscode = __importStar(__webpack_require__(/*! vscode */ "vscode"));
+const os = __importStar(__webpack_require__(/*! os */ "os"));
+const fs = __importStar(__webpack_require__(/*! fs */ "fs"));
 function getSetting(name) {
     const config = vscode.workspace.getConfiguration(name);
-    if (config.get("all") !== null && config.get("all") !== "") return config.get("all");
-    else if (os.platform() === "win32") return config.get("windows").replace(/%([^%]+)%/g, (_, n) => process.env[n] || ('%' + n + '%'));
-    else if (os.platform() === "darwin") return config.get("mac").replace(/\$(\w+)/g, (_, n) => process.env[n] || ('$' + n)).replace(/\${([^}]+)}/g, (_, n) => process.env[n] || ('${' + n + '}'));
-    else if (os.platform() === "linux") return config.get("linux").replace(/\$(\w+)/g, (_, n) => process.env[n] || ('$' + n)).replace(/\${([^}]+)}/g, (_, n) => process.env[n] || ('${' + n + '}'));
-    else return null;
+    if (config.get("all") !== null && config.get("all") !== "")
+        return config.get("all");
+    else if (os.platform() === "win32")
+        return config.get("windows").replace(/%([^%]+)%/g, (_, n) => process.env[n] || "%" + n + "%");
+    else if (os.platform() === "darwin")
+        return config.get("mac")
+            .replace(/\$(\w+)/g, (_, n) => process.env[n] || "$" + n)
+            .replace(/\${([^}]+)}/g, (_, n) => process.env[n] || "${" + n + "}");
+    else if (os.platform() === "linux")
+        return config.get("linux")
+            .replace(/\$(\w+)/g, (_, n) => process.env[n] || "$" + n)
+            .replace(/\${([^}]+)}/g, (_, n) => process.env[n] || "${" + n + "}");
+    else
+        return null;
 }
-
+exports.getSetting = getSetting;
+function getExtensionSetting(name) {
+    return vscode.workspace.getConfiguration("craftos-pc").get(name);
+}
+exports.getExtensionSetting = getExtensionSetting;
 function getDataPath() {
     const config = vscode.workspace.getConfiguration("craftos-pc");
-    if (config.get("dataPath") !== null && config.get("dataPath") !== "") return config.get("dataPath");
-    else if (os.platform() === "win32") return "%appdata%\\CraftOS-PC".replace(/%([^%]+)%/g, (_, n) => process.env[n] || ('%' + n + '%'));
-    else if (os.platform() === "darwin") return "$HOME/Library/Application Support/CraftOS-PC".replace(/\$(\w+)/g, (_, n) => process.env[n] || ('$' + n)).replace(/\${([^}]+)}/g, (_, n) => process.env[n] || ('${' + n + '}'))
-    else if (os.platform() === "linux") return "$HOME/.local/craftos-pc".replace(/\$(\w+)/g, (_, n) => process.env[n] || ('$' + n)).replace(/\${([^}]+)}/g, (_, n) => process.env[n] || ('${' + n + '}'))
-    else return null;
+    if (config.get("dataPath") !== null && config.get("dataPath") !== "")
+        return config.get("dataPath");
+    else if (os.platform() === "win32")
+        return "%appdata%\\CraftOS-PC".replace(/%([^%]+)%/g, (_, n) => process.env[n] || "%" + n + "%");
+    else if (os.platform() === "darwin")
+        return "$HOME/Library/Application Support/CraftOS-PC"
+            .replace(/\$(\w+)/g, (_, n) => process.env[n] || "$" + n)
+            .replace(/\${([^}]+)}/g, (_, n) => process.env[n] || "${" + n + "}");
+    else if (os.platform() === "linux")
+        return "$HOME/.local/craftos-pc"
+            .replace(/\$(\w+)/g, (_, n) => process.env[n] || "$" + n)
+            .replace(/\${([^}]+)}/g, (_, n) => process.env[n] || "${" + n + "}");
+    else
+        return null;
 }
-
+exports.getDataPath = getDataPath;
 function getExecutable() {
     let path = getSetting("craftos-pc.executablePath");
-    if (path !== null && fs.existsSync(path)) return path;
+    if (path !== null && fs.existsSync(path))
+        return path;
     if (os.platform() === "win32") {
-        path = "%localappdata%\\Programs\\CraftOS-PC\\CraftOS-PC_console.exe".replace(/%([^%]+)%/g, (_, n) => process.env[n] || ('%' + n + '%'));
-        if (fs.existsSync(path)) return path;
+        path = "%localappdata%\\Programs\\CraftOS-PC\\CraftOS-PC_console.exe".replace(/%([^%]+)%/g, (_, n) => process.env[n] || "%" + n + "%");
+        if (fs.existsSync(path))
+            return path;
     }
     if (path !== null && os.platform() === "win32" && fs.existsSync(path.replace("_console", ""))) {
         vscode.window.showErrorMessage("The CraftOS-PC installation is missing the console version, which is required for this extension to function. Please run the installer again, making sure to check the 'Console build for raw mode' box.");
@@ -161,1060 +1262,378 @@ function getExecutable() {
     vscode.window.showErrorMessage("The CraftOS-PC executable could not be found. Check the path in the settings. If you haven't installed CraftOS-PC yet, [download it from the official website.](https://www.craftos-pc.cc)");
     return null;
 }
-
-function closeWindow(id) {
-    if (id in windows) {
-        if (windows[id].panel !== undefined) windows[id].panel.dispose();
-        delete windows[id];
-        computer_provider._onDidChangeTreeData.fire(null);
-        monitor_provider._onDidChangeTreeData.fire(null);
-        if (vslsServer !== null) vslsServer.notify("windows", windows);
+exports.getExecutable = getExecutable;
+let crcTable = null;
+function makeCRCTable() {
+    let c;
+    let crcTable = [];
+    for (let n = 0; n < 256; n++) {
+        c = n;
+        for (let k = 0; k < 8; k++)
+            c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        crcTable[n] = c;
     }
+    return crcTable;
 }
-
-function closeAllWindows() {
-    for (let k in windows) if (windows[k].panel !== undefined) windows[k].panel.dispose();
-    windows = {};
-    computer_provider._onDidChangeTreeData.fire(null);
-    monitor_provider._onDidChangeTreeData.fire(null);
-    if (vslsServer !== null) vslsServer.notify("windows", {});
+function crc32(str) {
+    crcTable = crcTable || makeCRCTable();
+    let crc = 0 ^ -1;
+    for (let i = 0; i < str.length; i++) {
+        crc = (crc >>> 8) ^ crcTable[(crc ^ str.charCodeAt(i)) & 0xff];
+    }
+    return (crc ^ -1) >>> 0;
 }
+exports.crc32 = crc32;
 
-class Connection {
-    constructor(id) {
-        this.id = id;
-        this.process_connection = /*any*/ null;
-        this.data_continuation = null;
-        this.nextDataRequestID = 0;
-        this.dataRequestCallbacks = {};
-        this.isVersion11 = false;
-        this.useBinaryChecksum = false;
-        this.supportsFilesystem = false;
-        this.gotMessage = false;
-        this.isRemote = false;
-    }
 
-    connectToProcess(extra_args) {
-        this.isRemote = false;
-        if (this.process_connection !== null) return true;
-        const exe_path = getExecutable();
-        if (exe_path === null) {
-            return false;
-        }
-        const dir = vscode.workspace.getConfiguration("craftos-pc").get("dataPath");
-        let process_options = {
-            windowsHide: true
-        };
-        let args = vscode.workspace.getConfiguration("craftos-pc").get("additionalArguments");
-        if (args !== null) {args = args.split(' '); args.push("--raw");}
-        else args = ["--raw"];
-        if (dir !== null) args.splice(-1, 0, "-d", dir);
-        if (extra_args !== null) args = args.concat(extra_args);
-        log.appendLine("Running: " + exe_path + " " + args.join(" "));
-        try {
-            const process_connection = child_process.spawn(exe_path, args, process_options);
-            this.process_connection = process_connection;
-            process_connection.on("error", () => {
-                vscode.window.showErrorMessage("The CraftOS-PC worker process could not be launched. Check the path to the executable in the settings.");
-                this.process_connection = null;
-                closeWindow(this.id);
-            });
-            process_connection.on("exit", code => {
-                vscode.window.showInformationMessage(`The CraftOS-PC worker process exited with code ${code}.`)
-                this.process_connection = null;
-                closeWindow(this.id);
-            });
-            process_connection.on("disconnect", () => {
-                vscode.window.showErrorMessage(`The CraftOS-PC worker process was disconnected from the window.`)
-                this.process_connection = null;
-                closeWindow(this.id);
-            });
-            process_connection.on("close", () => {
-                //vscode.window.showInformationMessage(`The CraftOS-PC worker process closed all IO streams with code ${code}.`)
-                this.process_connection = null;
-                closeWindow(this.id);
-            });
-            process_connection.stdout.on("data", data => this.processDataChunk(data));
-            process_connection.stderr.on("data", data => {
-                log.appendLine(data.toString());
-            });
-        } catch (e) {
-            vscode.window.showErrorMessage("The CraftOS-PC worker process could not be launched. Check the path to the executable in the settings.");
-            log.appendLine(e);
-            return;
-        }
-        this.sendRaw("!CPC0008BgADAA==498C93D2\n"); // 0x0003
-        vscode.window.showInformationMessage("A new CraftOS-PC worker process has been started.");
-        openPanel(this.id, true);
-        this.gotMessage = false;
-        this.data_continuation = null;
-        this.nextDataRequestID = 0;
-        this.dataRequestCallbacks = {};
-        this.isVersion11 = false;
-        this.useBinaryChecksum = false;
-        this.supportsFilesystem = false;
-    }
-    
-    connectToWebSocket(url) {
-        this.isRemote = true;
-        if (this.process_connection !== null || url === undefined) return true;
-        const socket = new WebSocket(url);
-        // We insert a small shim here so we don't have to rewrite the other code.
-        const process_connection = {
-            connected: socket.readyState == WebSocket.OPEN,
-            disconnect: () => socket.close(),
-            kill: () => socket.close(),
-            stdin: {write: data => {for (let i = 0; i < data.length; i += 65530) socket.send(data.substring(i, Math.min(i + 65530, data.length)))}}
-        };
-        this.process_connection = process_connection;
-        socket.on("open", () => {
-            //socket.send("!CPC0008BgACAA==FBAC4FC2\n"); // 0x0002
-            //socket.send("!CPC0008BgADAA==498C93D2\n"); // 0x0003
-            //socket.send("!CPC0008BgAGAA==0E2CE902\n"); // 0x0006
-            socket.send("!CPC0008BgAHAA==8C7C7ED3\n"); // 0x0007
-            vscode.window.showInformationMessage("Successfully connected to the WebSocket server.");
-            process_connection.connected = true;
-            openPanel(this.id, true);
-        });
-        socket.on("error", e => {
-            if (e.message.match("certificate has expired"))
-                vscode.window.showErrorMessage("A bug in VS Code is causing the connection to fail. Please go to https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error to fix it.", "Open Page", "OK").then(res => {
-                    if (res === "OK") return;
-                    vscode.env.openExternal(vscode.Uri.parse("https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error"));
-                });
-            else vscode.window.showErrorMessage("An error occurred while connecting to the server: " + e.message);
-            this.process_connection = null;
-            closeWindow(this.id);
-        });
-        socket.on("close", () => {
-            vscode.window.showInformationMessage("Disconnected from the WebSocket server.");
-            this.process_connection = null;
-            closeWindow(this.id);
-        });
-        socket.on("message", data => this.processDataChunk(data));
-        this.gotMessage = false;
-        this.data_continuation = null;
-        this.nextDataRequestID = 0;
-        this.dataRequestCallbacks = {};
-        this.isVersion11 = false;
-        this.useBinaryChecksum = false;
-        this.supportsFilesystem = false;
-    }
-    
-    queueDataRequest(type, path, path2) {
-        if (this.process_connection === null) return new Promise((resolve, reject) => reject(new Error("Path does not exist")));
-        let filedata = undefined;
-        if ((type & 0xF1) === 0x11) {
-            filedata = path2;
-            path2 = undefined;
-        }
-        const pathbuf = Buffer.from(path, "latin1");
-        const path2buf = (typeof path2 === "string" ? Buffer.from(path2, "latin1") : null);
-        const data = Buffer.alloc(5 + pathbuf.length + (typeof path2 === "string" ? path2buf.length + 1 : 0));
-        data[0] = 7;
-        data[1] = 0;
-        data[2] = type;
-        data[3] = this.nextDataRequestID;
-        this.nextDataRequestID = (this.nextDataRequestID + 1) & 0xFF;
-        pathbuf.copy(data, 4);
-        if (typeof path2 === "string") path2buf.copy(data, 5 + pathbuf.length);
-        const b64 = data.toString('base64');
-        const packet = "!CPC" + ("000" + b64.length.toString(16)).slice(-4) + b64 + ("0000000" + crc32(this.useBinaryChecksum ? data.toString("binary") : b64).toString(16)).slice(-8) + "\n";
-        this.sendRaw(packet, 'utf8');
-        if (typeof filedata !== "undefined") {
-            const data2 = Buffer.alloc(8 + filedata.length);
-            data2[0] = 9;
-            data2[1] = 0;
-            data2[2] = 0;
-            data2[3] = data[3];
-            data2.writeInt32LE(filedata.length, 4);
-            filedata.copy(data2, 8);
-            const b642 = data2.toString('base64');
-            const packet2 = (b642.length > 65535 ? "!CPD" + ("00000000000" + b642.length.toString(16)).slice(-12) : "!CPC" + ("000" + b642.length.toString(16)).slice(-4)) + b642 + ("0000000" + crc32(this.useBinaryChecksum ? data2.toString("binary") : b642).toString(16)).slice(-8) + "\n";
-            this.sendRaw(packet2, 'utf8');
-        }
-        return new Promise((resolve, reject) => {
-            let tid = setTimeout(() => {
-                delete this.dataRequestCallbacks[data[3]];
-                log.appendLine("Could not get info for " + path + " (request " + data[3] + ")");
-                reject(new Error("Timeout"));
-            }, 3000);
-            this.dataRequestCallbacks[data[3]] = (data, err) => {
-                clearTimeout(tid);
-                if (!err) resolve(data);
-                else reject(err);
-            }
-        });
-    }
+/***/ }),
 
-    /**
-     * @param {Buffer} chunk data
-     */
-    processDataChunk(chunk) {
-        if (typeof chunk === "string") chunk = new Buffer(chunk, "utf8");
-        if (this.data_continuation !== null) {
-            chunk = Buffer.concat([this.data_continuation, chunk]);
-            this.data_continuation = null;
-        }
-        while (chunk.length > 0) {
-            let off;
-            if (chunk.subarray(0, 4).toString() === "!CPC") off = 8;
-            else if (chunk.subarray(0, 4).toString() === "!CPD" && this.isVersion11) off = 16;
-            else {
-                log.appendLine("Invalid message");
-                return;
-            }
-            const size = parseInt(chunk.subarray(4, off).toString(), 16);
-            if (size > chunk.length + 9) {
-                this.data_continuation = chunk;
-                return;
-            }
-            const data = Buffer.from(chunk.subarray(off, size + off).toString(), 'base64');
-            const good_checksum = parseInt(chunk.subarray(size + off, size + off + 8).toString(), 16);
-            const data_checksum = crc32(this.useBinaryChecksum ? data.toString("binary") : chunk.subarray(off, size + off).toString());
-            if (good_checksum !== data_checksum) {
-                log.appendLine("Bad checksum: expected " + good_checksum.toString(16) + ", got " + data_checksum.toString(16));
-                chunk = chunk.subarray(size + 16);
-                while (String.fromCharCode(chunk[0]).match(/\s/)) chunk = chunk.subarray(1);
-                continue;
-            }
-            let term = {}
-            const stream = bufferstream(data);
-            const type = stream.get();
-            const _id = stream.get();
-            const id = this.id;
-            if (!this.gotMessage && type == 4) this.sendRaw("!CPC0008BgADAA==498C93D2\n"); // 0x0003
-            this.gotMessage = true;
-            let winid = null;
-            if (type === 0) {
-                term.mode = stream.get();
-                term.blink = stream.get() === 1;
-                term.width = stream.readUInt16();
-                term.height = stream.readUInt16();
-                term.cursorX = stream.readUInt16();
-                term.cursorY = stream.readUInt16();
-                stream.readUInt32();
-                term.screen = {}
-                term.colors = {}
-                term.pixels = {}
-                if (term.mode === 0) {
-                    let c = stream.get();
-                    let n = stream.get();
-                    for (let y = 0; y < term.height; y++) {
-                        term.screen[y] = {}
-                        for (let x = 0; x < term.width; x++) {
-                            term.screen[y][x] = c;
-                            n--;
-                            if (n === 0) {
-                                c = stream.get();
-                                n = stream.get();
-                            }
-                        }
-                    }
-                    for (let y = 0; y < term.height; y++) {
-                        term.colors[y] = {}
-                        for (let x = 0; x < term.width; x++) {
-                            term.colors[y][x] = c;
-                            n--;
-                            if (n === 0) {
-                                c = stream.get();
-                                n = stream.get();
-                            }
-                        }
-                    }
-                    stream.putback();
-                    stream.putback();
-                } else if (term.mode === 1 || term.mode === 2) {
-                    let c = stream.get();
-                    let n = stream.get();
-                    for (let y = 0; y < term.height * 9; y++) {
-                        term.pixels[y] = {}
-                        for (let x = 0; x < term.width * 6; x++) {
-                            term.pixels[y][x] = c;
-                            n--;
-                            if (n === 0) {
-                                c = stream.get();
-                                n = stream.get();
-                            }
-                        }
-                    }
-                    stream.putback();
-                    stream.putback();
-                }
-                term.palette = {}
-                if (term.mode === 0 || term.mode === 1) {
-                    for (let i = 0; i < 16; i++) {
-                        term.palette[i] = {}
-                        term.palette[i].r = stream.get();
-                        term.palette[i].g = stream.get();
-                        term.palette[i].b = stream.get();
-                    }
-                } else if (term.mode === 2) {
-                    for (let i = 0; i < 256; i++) {
-                        term.palette[i] = {}
-                        term.palette[i].r = stream.get();
-                        term.palette[i].g = stream.get();
-                        term.palette[i].b = stream.get();
-                    }
-                }
-            } else if (type === 4) {
-                const type2 = stream.get();
-                if (type2 === 2) {
-                    if (this.process_connection.connected) {
-                        this.sendRaw("\n", "utf8");
-                        this.process_connection.disconnect();
-                    } else {
-                        this.process_connection.kill(SIGINT);
-                        //vscode.window.showWarningMessage("The CraftOS-PC worker process did not close correctly. Some changes may not have been saved.")
-                    }
-                    closeWindow(this.id);
-                    return;
-                } else if (type2 === 1) {
-                    if (windows[id].panel !== undefined) windows[id].panel.dispose();
-                    delete windows[id];
-                    computer_provider._onDidChangeTreeData.fire(null);
-                    monitor_provider._onDidChangeTreeData.fire(null);
-                    if (vslsServer !== null) vslsServer.notify("windows", windows);
-                    chunk = chunk.subarray(size + 16);
-                    while (String.fromCharCode(chunk[0]).match(/\s/)) chunk = chunk.subarray(1);
-                    continue;
-                } else if (type2 === 0) {
-                    winid = stream.get();
-                    term.width = stream.readUInt16();
-                    term.height = stream.readUInt16();
-                    term.title = "";
-                    for (let c = stream.get(); c !== 0; c = stream.get()) term.title += String.fromCharCode(c);
-                    if (windows[id] !== undefined) {
-                        windows[id].isMonitor = typeof term.title === "string" && term.title.indexOf("Monitor") !== -1;
-                        if (winid > 0) {
-                            windows[id].computerID = winid - 1;
-                            windows[id].isMonitor = false;
-                        } else if (typeof term.title === "string" && term.title.match(/Computer \d+$/)) {
-                            windows[id].computerID = parseInt(term.title.match(/Computer (\d+)$/)[1]);
-                        }
-                    }
-                }
-            } else if (type === 5) {
-                const flags = stream.readUInt32();
-                let title = "";
-                for (let c = stream.get(); c !== 0; c = stream.get()) title += String.fromCharCode(c);
-                let message = "";
-                for (let c = stream.get(); c !== 0; c = stream.get()) message += String.fromCharCode(c);
-                switch (flags) {
-                    case 0x10: vscode.window.showErrorMessage("CraftOS-PC: " + title + ": " + message); break;
-                    case 0x20: vscode.window.showWarningMessage("CraftOS-PC: " + title + ": " + message); break;
-                    case 0x40: vscode.window.showInformationMessage("CraftOS-PC: " + title + ": " + message); break;
-                }
-            } else if (type === 6) {
-                const flags = stream.readUInt16();
-                this.isVersion11 = true;
-                this.useBinaryChecksum = (flags & 1) === 1;
-                this.supportsFilesystem = (flags & 2) === 2;
-                computer_provider._onDidChangeTreeData.fire(null);
-                if (vslsServer !== null) vslsServer.notify("flags", {isVersion11: this.isVersion11, useBinaryChecksum: this.useBinaryChecksum, supportsFilesystem: false});
-            } else if (type === 8) {
-                const reqtype = stream.get();
-                const reqid = stream.get();
-                if (!this.dataRequestCallbacks[reqid]) {
-                    log.appendLine("Got stray response for request ID " + reqid + ", ignoring.");
-                    chunk = chunk.subarray(size + 16);
-                    while (String.fromCharCode(chunk[0]).match(/\s/)) chunk = chunk.subarray(1);
-                    continue;
-                }
-                switch (reqtype) {
-                    case 0: case 1: case 2: {
-                        const ok = stream.get();
-                        if (ok === 0) this.dataRequestCallbacks[reqid](false);
-                        else if (ok === 1) this.dataRequestCallbacks[reqid](true);
-                        else this.dataRequestCallbacks[reqid](null, new Error("Operation failed"));
-                        break;
-                    } case 3: case 5: case 6: {
-                        const size = stream.readUInt32();
-                        if (size === 0xFFFFFFFF) this.dataRequestCallbacks[reqid](null, new Error("Operation failed"));
-                        else this.dataRequestCallbacks[reqid](size);
-                        break;
-                    } case 4: {
-                        let str = "";
-                        for (let c = stream.get(); c !== 0; c = stream.get()) str += String.fromCharCode(c);
-                        if (str !== "") this.dataRequestCallbacks[reqid](str);
-                        else this.dataRequestCallbacks[reqid](null, new Error("Operation failed"));
-                        break;
-                    } case 7: case 9: {
-                        const size = stream.readUInt32();
-                        if (size === 0xFFFFFFFF) this.dataRequestCallbacks[reqid](null, new Error("Operation failed"));
-                        else {
-                            let arr = [];
-                            for (let i = 0; i < size; i++) {
-                                arr[i] = "";
-                                for (let c = stream.get(); c !== 0; c = stream.get()) arr[i] += String.fromCharCode(c);
-                            }
-                            this.dataRequestCallbacks[reqid](arr);
-                        }
-                        break;
-                    } case 8: {
-                        let attr = {};
-                        attr.size = stream.readUInt32();
-                        attr.created = new Date(stream.readUInt64());
-                        attr.modified = new Date(stream.readUInt64());
-                        attr.isDir = stream.get() !== 0;
-                        attr.isReadOnly = stream.get() !== 0;
-                        const ok = stream.get();
-                        if (ok === 0) this.dataRequestCallbacks[reqid](attr);
-                        else if (ok === 1) this.dataRequestCallbacks[reqid](null);
-                        else this.dataRequestCallbacks[reqid](null, new Error("Operation failed"));
-                        break;
-                    } case 10: case 11: case 12: case 13:
-                    case 16: case 17: case 18: case 19:
-                    case 20: case 21: case 22: case 23: {
-                        let str = "";
-                        for (let c = stream.get(); c !== 0; c = stream.get()) str += String.fromCharCode(c);
-                        if (str === "") this.dataRequestCallbacks[reqid]();
-                        else this.dataRequestCallbacks[reqid](null, new Error(str));
-                        break;
-                    }
-                }
-                delete this.dataRequestCallbacks[reqid];
-            } else if (type === 9) {
-                const fail = stream.get();
-                const reqid = stream.get();
-                const size = stream.readUInt32();
-                if (!this.dataRequestCallbacks[reqid]) {
-                    log.appendLine("Got stray data response for request ID " + reqid + ", ignoring.");
-                    chunk = chunk.subarray(size + 16);
-                    while (String.fromCharCode(chunk[0]).match(/\s/)) chunk = chunk.subarray(1);
-                    continue;
-                }
-                const data = Buffer.alloc(size);
-                stream.str.copy(data, 0, stream.pos);
-                if (fail) this.dataRequestCallbacks[reqid](null, new Error(data.toString()));
-                else this.dataRequestCallbacks[reqid](data);
-                delete this.dataRequestCallbacks[reqid];
-            }
-            let newWindow = false;
-            if (windows[id] === undefined) {windows[id] = {}; newWindow = true;}
-            if (windows[id].term === undefined) windows[id].term = {};
-            for (let k in term) windows[id].term[k] = term[k];
-            if (windows[id].isMonitor === undefined) {
-                windows[id].isMonitor = typeof windows[id].term.title === "string" && windows[id].term.title.indexOf("Monitor") !== -1;
-                if (winid !== null && winid > 0) {
-                    windows[id].computerID = winid - 1;
-                    windows[id].isMonitor = false;
-                } else if (typeof windows[id].term.title === "string" && windows[id].term.title.match(/Computer \d+$/)) {
-                    windows[id].computerID = parseInt(windows[id].term.title.match(/Computer (\d+)$/)[1]);
-                }
-            }
-            if (windows[id].panel !== undefined) {
-                windows[id].panel.webview.postMessage(windows[id].term);
-                windows[id].panel.title = windows[id].term.title || "CraftOS-PC Terminal";
-            }
-            if (vslsServer !== null) {
-                if (newWindow) vslsServer.notify("windows", windows);
-                else vslsServer.notify("term", {id: id, term: windows[id].term, refresh: type === 4});
-            }
-            if (type === 4) {
-                computer_provider._onDidChangeTreeData.fire(null);
-                monitor_provider._onDidChangeTreeData.fire(null);
-            }
-            chunk = chunk.subarray(size + off + 8);
-            while (String.fromCharCode(chunk[0]).match(/\s/)) chunk = chunk.subarray(1);
-        }
-    }
+/***/ "./src/view_terminals.ts":
+/*!*******************************!*\
+  !*** ./src/view_terminals.ts ***!
+  \*******************************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
-    sendRaw(packet) {
-        this.process_connection.stdin.write(packet, 'utf8');
-    }
-}
 
-function checkVersion(silent) {
-    const exe_path = getSetting("craftos-pc.executablePath");
-    if (exe_path === null) return;
-    child_process.execFile(exe_path, ["--version"], {windowsHide: true}, (err, stdout, stderr) => {
-        if (err) {
-            if (!silent) vscode.window.showErrorMessage("Failed to detect CraftOS-PC version (error: " + err.message + "). Please check that the path is correct and working properly.");
-            return;
-        }
-        let version = (stdout.match(/CraftOS-PC v([\d\.]+)/) || [])[1];
-        if (version === undefined || version === null) {
-            if (!silent) vscode.window.showErrorMessage("Failed to detect CraftOS-PC version (error: no version number detected)." + (os.platform === "win32" ? "Make sure the path is pointing to CraftOS-PC_console.exe, and not CraftOS-PC.exe." : ""));
-            return;
-        }
-        log.appendLine("Detected CraftOS-PC " + version);
-        version = semver.coerce(version);
-        processFeatures.debugger = semver.gt(version, "2.6.6");
-        processFeatures.filesystem = semver.gte(version, "2.6.0");
-        if (!silent) {
-            if (version == "2.5.4" || version == "2.5.5") vscode.window.showWarningMessage("This version of CraftOS-PC crashes when using multiple windows. Update to a newer version to fix this.");
-            else if (version == "2.5.1") vscode.window.showWarningMessage("This version of CraftOS-PC often crashes when using the extension. Update to a newer version to fix this.");
-            else if (semver.lt(version, "2.4.0")) vscode.window.showWarningMessage("This version of CraftOS-PC does not support using multiple windows properly. Update to a newer version to fix this.");
-        }
-    });
-}
-
-/**
- * @implements {vscode.FileSystemProvider}
- */
-class RawFileSystemProvider {
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MonitorProvider = exports.ComputerProvider = void 0;
+const vscode_1 = __importDefault(__webpack_require__(/*! vscode */ "vscode"));
+const globals_1 = __webpack_require__(/*! ./globals */ "./src/globals.ts");
+const path_1 = __importDefault(__webpack_require__(/*! path */ "path"));
+class ComputerProvider extends vscode_1.default.EventEmitter {
     constructor() {
-        this._onDidChangeFile = new vscode.EventEmitter()
-        this.onDidChangeFile = this._onDidChangeFile.event
+        super(...arguments);
+        this.onDidChangeTreeData = this.event;
     }
-
-    getConnection(authority) {
-        const id = parseInt(authority)
-        if (!connections.has(id)) throw vscode.FileSystemError.Unavailable("Computer connection not open yet");
-        const connection = connections.get(id);
-        if (!connection.supportsFilesystem) throw vscode.FileSystemError.Unavailable("Connected computer doesn't support filesystems");
-        return connection;
+    getTreeItem(element) {
+        const r = new vscode_1.default.TreeItem(element.title);
+        r.iconPath = vscode_1.default.Uri.file(path_1.default.join(globals_1.ext.context.extensionPath, "media/computer.svg"));
+        r.command = {
+            command: "craftos-pc.open-window",
+            title: "CraftOS-PC: Open Window",
+            arguments: [element],
+        };
+        r.tooltip = element.globalID;
+        if ((0, globals_1.FindConnection)(element.globalID)?.supportsFilesystem)
+            r.contextValue = "data-available";
+        return r;
     }
-
-    /**
-     * @param {vscode.Uri} source
-     * @param {vscode.Uri} destination
-     * @param {{overwrite: boolean}} options
-     */
-    copy(source, destination, options) {
-        if (source.authority !== destination.authority) throw vscode.FileSystemError.Unavailable("Cannot move across computers");
-        const connection = this.getConnection(source.authority);
-        return connection.queueDataRequest(12, source.path, destination.path);
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     */
-    createDirectory(uri) {
-        const connection = this.getConnection(uri.authority);
-        return connection.queueDataRequest(10, uri.path);
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     * @param {{recursive: boolean}} options
-     */
-    delete(uri, options) {
-        // Warning: ignores options.recursive (always true)
-        const connection = this.getConnection(uri.authority);
-        return connection.queueDataRequest(11, uri.path);
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     */
-    readDirectory(uri) {
-        const connection = this.getConnection(uri.authority);
-        return new Promise(resolve => {
-            connection.queueDataRequest(7, uri.path).then(files => {
-                let arr = [];
-                let promises = [];
-                for (let f of files) {
-                    promises.push(new Promise(resolve => connection.queueDataRequest(1, path.join(uri.path, f)).then(isDir => {
-                        arr.push([f, isDir ? vscode.FileType.Directory : vscode.FileType.File]);
-                        resolve();
-                    }).catch(() => {
-                        arr.push([f, vscode.FileType.Unknown]);
-                        resolve();
-                    })));
-                }
-                return Promise.all(promises).then(() => {
-                    arr.sort((a, b) => {
-                        if (a[1] == vscode.FileType.File && b[1] == vscode.FileType.Directory) return 1;
-                        else if (b[1] == vscode.FileType.File && a[1] == vscode.FileType.Directory) return -1;
-                        else return a[0].localeCompare(b[0]);
-                    });
-                    resolve(arr);
-                });
-            });
-        });
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     */
-    readFile(uri) {
-        const connection = this.getConnection(uri.authority);
-        return connection.queueDataRequest(20, uri.path).then(data => Uint8Array.from(data));
-    }
-    /**
-     * @param {vscode.Uri} oldUri 
-     * @param {vscode.Uri} newUri 
-     * @param {{overwrite: boolean}} options 
-     */
-    rename(oldUri, newUri, options) {
-        // Warning: ignores overwrite (always false)
-        if (oldUri.authority !== newUri.authority) throw vscode.FileSystemError.Unavailable("Cannot move across computers");
-        const connection = this.getConnection(oldUri.authority);
-        return connection.queueDataRequest(13, oldUri.path, newUri.path);
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     */
-    stat(uri) {
-        const connection = this.getConnection(uri.authority);
-        return connection.queueDataRequest(8, uri.path).then(attributes => {
-            if (attributes === null) throw vscode.FileSystemError.FileNotFound(uri);
-            return {
-                ctime: attributes.created.getTime(),
-                mtime: attributes.modified.getTime(),
-                size: attributes.size,
-                type: attributes.isDir ? vscode.FileType.Directory : vscode.FileType.File
-            }
-        });
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     * @param {{excludes: string[], recursive: boolean}} options
-     */
-    watch(uri, options) {
-        // unimplemented
-        const connection = this.getConnection(uri.authority);
-        return null;
-    }
-    /**
-     * @param {vscode.Uri} uri 
-     * @param {Uint8Array} content
-     * @param {{create: boolean, overwrite: boolean}} options
-     */
-    writeFile(uri, content, options) {
-        const connection = this.getConnection(uri.authority);
-        return connection.queueDataRequest(21, uri.path, content);
+    getChildren(element) {
+        if (element)
+            return null;
+        return [...globals_1.ext.connections.values()]
+            .map((connection) => [...connection.windows.values()]
+            .filter((window) => !window.isMonitor)
+            .map((window) => ({
+            title: window.term?.title || "CraftOS-PC Computer",
+            globalID: `${window.id}@${connection.id}`,
+        })))
+            .flat(1);
     }
 }
-
-const debugAdapterFactory = {
-    /**
-     * @param {vscode.DebugSession} session
-     */
-    createDebugAdapterDescriptor: (session, executable) => {
-        if (session.configuration.request === "launch") {
-            if (!processFeatures.debugger) {
-                vscode.window.showErrorMessage("This version of CraftOS-PC does not support debugging. Please update to the latest version.");
-                return null;
-            }
-            const exe_path = getSetting("craftos-pc.executablePath");
-            if (exe_path === null) {
-                vscode.window.showErrorMessage("Please set the path to the CraftOS-PC executable in the settings.");
-                return null;
-            }
-            if (!fs.existsSync(exe_path)) {
-                vscode.window.showErrorMessage("The CraftOS-PC executable could not be found. Check the path in the settings." + (os.platform() === "win32" ? " If you installed CraftOS-PC without administrator privileges, you will need to set the path manually. Also make sure CraftOS-PC_console.exe exists in the install directory - if not, reinstall CraftOS-PC with the Console build component enabled." : ""));
-                return null;
-            }
-            const dir = vscode.workspace.getConfiguration("craftos-pc").get("dataPath");
-            let args = vscode.workspace.getConfiguration("craftos-pc").get("additionalArguments");
-            if (args !== null) {args = args.split(' '); args.push("--exec"); args.push("periphemu.create(0,'debug_adapter')")}
-            else args = ["--exec", "periphemu.create(0,'debug_adapter')"];
-            if (dir !== null) args.splice(0, 0, "-d", dir);
-            return new vscode.DebugAdapterExecutable(exe_path, args);
-        } else if (session.configuration.request === "attach") {
-            return new vscode.DebugAdapterServer(session.configuration.port || 12100, session.configuration.host);
-        } else return undefined;
+exports.ComputerProvider = ComputerProvider;
+class MonitorProvider extends vscode_1.default.EventEmitter {
+    constructor() {
+        super(...arguments);
+        this.onDidChangeTreeData = this.event;
+    }
+    getTreeItem(element) {
+        const r = new vscode_1.default.TreeItem(element.title);
+        r.iconPath = vscode_1.default.Uri.file(path_1.default.join(globals_1.ext.context.extensionPath, "media/monitor.svg"));
+        r.command = {
+            command: "craftos-pc.open-window",
+            title: "CraftOS-PC: Open Window",
+            arguments: [element],
+        };
+        r.tooltip = element.globalID;
+        return r;
+    }
+    getChildren(element) {
+        if (element)
+            return null;
+        return [...globals_1.ext.connections.values()]
+            .map((connection) => [...connection.windows.values()]
+            .filter((window) => window.isMonitor)
+            .map((window) => ({
+            title: window.term?.title || "CraftOS-PC Computer",
+            globalID: `${window.id}@${connection.id}`,
+        })))
+            .flat(1);
     }
 }
+exports.MonitorProvider = MonitorProvider;
 
-let nextConnection = 0;
-function connectToProcess(extra_args) {
-    const id = nextConnection++;
-    let minId = 0;
-    for (const connection of connections.values()) {
-        if (!connection.isRemote && windows[connection.id]) {
-            minId = Math.max(minId, (windows[connection.id].computerID || 0) + 1);
-        }
-    }
-    const connection = new Connection(id);
-    connections.set(id, connection);
-    if (minId > 0) {
-        extra_args = extra_args || [];
-        extra_args.push('--id');
-        extra_args.push(minId);
-    }
-    connection.connectToProcess(extra_args);
-    return connection;
-}
 
-function connectToWebSocket(url) {
-    const id = nextConnection++;
-    const connection = new Connection(id);
-    connections.set(id, connection);
-    connection.connectToWebSocket(url);
-    return connection;
-}
+/***/ }),
 
-function openPanel(id, force) {
-    if (!force && (extcontext === null || windows[id] === undefined)) return;
-    if (windows[id] !== undefined && windows[id].panel !== undefined) {
-        windows[id].panel.reveal();
-        return;
+/***/ "./src/window.ts":
+/*!***********************!*\
+  !*** ./src/window.ts ***!
+  \***********************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CraftWindow = void 0;
+const vscode = __importStar(__webpack_require__(/*! vscode */ "vscode"));
+const os = __importStar(__webpack_require__(/*! os */ "os"));
+const fs = __importStar(__webpack_require__(/*! fs */ "fs"));
+const utils_1 = __webpack_require__(/*! ./utils */ "./src/utils.ts");
+const path = __importStar(__webpack_require__(/*! path */ "path"));
+const packet_1 = __webpack_require__(/*! ./packet */ "./src/packet.ts");
+const globals_1 = __webpack_require__(/*! ./globals */ "./src/globals.ts");
+const events_1 = __importDefault(__webpack_require__(/*! events */ "events"));
+function loadFont() {
     const customFont = vscode.workspace.getConfiguration("craftos-pc.customFont");
     let fontPath = customFont.get("path");
     if (fontPath === "hdfont") {
-        const execPath = getSetting("craftos-pc.executablePath");
-        if (os.platform() === "win32") fontPath = execPath.replace(/[\/\\][^\/\\]+$/, "/") + "hdfont.bmp";
-        else if (os.platform() === "darwin" && execPath.indexOf("MacOS/craftos") !== -1) fontPath = execPath.replace(/MacOS\/[^\/]+$/, "") + "Resources/hdfont.bmp";
-        else if (os.platform() === "darwin" || (os.platform() === "linux" && !fs.existsSync("/usr/share/craftos/hdfont.bmp"))) fontPath = "/usr/local/share/craftos/hdfont.bmp";
-        else if (os.platform() === "linux") fontPath = "/usr/share/craftos/hdfont.bmp";
+        const execPath = (0, utils_1.getSetting)("craftos-pc.executablePath");
+        if (os.platform() === "win32")
+            fontPath = execPath.replace(/[\/\\][^\/\\]+$/, "/") + "hdfont.bmp";
+        else if (os.platform() === "darwin" && execPath.indexOf("MacOS/craftos") !== -1)
+            fontPath = execPath.replace(/MacOS\/[^\/]+$/, "") + "Resources/hdfont.bmp";
+        else if (os.platform() === "darwin" ||
+            (os.platform() === "linux" && !fs.existsSync("/usr/share/craftos/hdfont.bmp")))
+            fontPath = "/usr/local/share/craftos/hdfont.bmp";
+        else if (os.platform() === "linux")
+            fontPath = "/usr/share/craftos/hdfont.bmp";
         if (!fs.existsSync(fontPath)) {
             vscode.window.showWarningMessage("The path to the HD font could not be found; the default font will be used instead. Please set the path to the HD font manually.");
             fontPath = null;
         }
     }
-    const panel = vscode.window.createWebviewPanel(
-        'craftos-pc',
-        'CraftOS-PC Terminal',
-        vscode.window.activeTextEditor && vscode.window.activeTextEditor.viewColumn || vscode.ViewColumn.One,
-        {
+    return fontPath;
+}
+class CraftWindow extends events_1.default {
+    constructor(parent, id) {
+        super();
+        this.parent = parent;
+        this.id = id;
+        this.isMonitor = false;
+    }
+    open() {
+        if (this.panel) {
+            this.panel.reveal();
+            return;
+        }
+        const fontPath = loadFont();
+        this.panel = vscode.window.createWebviewPanel("craftos-pc", "CraftOS-PC Terminal", (vscode.window.activeTextEditor && vscode.window.activeTextEditor.viewColumn) || vscode.ViewColumn.One, {
             enableScripts: true,
             retainContextWhenHidden: true,
-            localResourceRoots: (fontPath !== null && fontPath !== "") ? [vscode.Uri.file(fontPath.replace(/[\/\\][^\/\\]*$/, ""))] : null
-        }
-    );
-    extcontext.subscriptions.push(panel);
-    // Get path to resource on disk
-    const onDiskPath = vscode.Uri.file(path.join(extcontext.extensionPath, 'index.html'));
-    panel.iconPath = windows[id] && windows[id].isMonitor ? vscode.Uri.file(path.join(extcontext.extensionPath, 'media/monitor.svg')) : vscode.Uri.file(path.join(extcontext.extensionPath, 'media/computer.svg'));
-    panel.webview.html = fs.readFileSync(onDiskPath.fsPath, 'utf8');
-    panel.webview.onDidReceiveMessage(message => {
-        if (typeof message !== "object") return;
-        const connection = connections.get(id);
-        if (!connection || !connection.process_connection) return;
-        if (message.getFontPath === true) {
-            if (fontPath !== null && fontPath !== "") panel.webview.postMessage({fontPath: panel.webview.asWebviewUri(vscode.Uri.file(fontPath)).toString()});
-            return;
-        }
-        const data = Buffer.alloc(message.data.length / 2 + 2);
-        data[0] = message.type;
-        data[1] = 0;
-        Buffer.from(message.data, 'hex').copy(data, 2)
-        const b64 = data.toString('base64');
-        const packet = "!CPC" + ("000" + b64.length.toString(16)).slice(-4) + b64 + ("0000000" + crc32(connection.useBinaryChecksum ? data.toString("binary") : b64).toString(16)).slice(-8) + "\n";
-        connection.sendRaw(packet, 'utf8');
-    });
-    panel.onDidChangeViewState(e => {
-        if (e.webviewPanel.active && windows[id].term !== undefined) {
-            e.webviewPanel.webview.postMessage(windows[id].term);
-            e.webviewPanel.title = windows[id].term.title || "CraftOS-PC Terminal";
-        }
-    });
-    panel.onDidDispose(() => {if (windows[id].panel !== undefined) delete windows[id].panel;});
-    let newWindow = false;
-    if (windows[id] === undefined) {windows[id] = {}; newWindow = true;}
-    windows[id].panel = panel;
-    if (windows[id].term !== undefined) {
-        windows[id].panel.webview.postMessage(windows[id].term);
-        windows[id].panel.title = windows[id].term.title || "CraftOS-PC Terminal";
-    }
-    if (newWindow && vslsServer !== null) vslsServer.notify("windows", windows);
-}
-
-/**
- * @param {vscode.ExtensionContext} context
- */
-function activate(context) {
-
-    log.appendLine("The CraftOS-PC extension is now active.");
-
-    extcontext = context;
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open', () => {
-        return connectToProcess();
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-websocket', obj => {
-        if (typeof obj === "string") return connectToWebSocket(obj);
-        let wsHistory = context.globalState.get("JackMacWindows.craftos-pc/websocket-history", [""]);
-        let quickPick = vscode.window.createQuickPick();
-        quickPick.items = wsHistory.map(val => {return {label: val}});
-        quickPick.title = "Enter the WebSocket URL:";
-        quickPick.placeholder = "wss://";
-        quickPick.canSelectMany = false;
-        quickPick.onDidChangeValue(() => {
-            wsHistory[0] = quickPick.value;
-            quickPick.items = wsHistory.map(val => {return {label: val}});
+            localResourceRoots: fontPath !== null && fontPath !== ""
+                ? [vscode.Uri.file(fontPath.replace(/[\/\\][^\/\\]*$/, ""))]
+                : null,
         });
-        quickPick.onDidAccept(() => {
-            let str = quickPick.selectedItems[0].label;
-            if (!validateURL(str)) vscode.window.showErrorMessage("The URL you entered is not valid.");
-            else {
-                wsHistory[0] = str;
-                if (wsHistory.slice(1).includes(str))
-                    wsHistory.splice(wsHistory.slice(1).indexOf(str)+1, 1);
-                wsHistory.unshift("");
-                context.globalState.update("JackMacWindows.craftos-pc/websocket-history", wsHistory);
-                connectToWebSocket(str);
-            }
-        });
-        quickPick.show();
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.clear-history', () => {
-        context.globalState.update("JackMacWindows.craftos-pc/websocket-history", [""]);
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-new-remote', () => {
-        if (!didShowBetaMessage) {
-            vscode.window.showWarningMessage("remote.craftos-pc.cc is currently in beta. Be aware that things may not work as expected. If you run into issues, please report them [on GitHub](https://github.com/MCJack123/remote.craftos-pc.cc/issues). If things break, use Shift+Ctrl+P (Shift+Cmd+P on Mac), then type 'reload window' and press Enter.");
-            didShowBetaMessage = true;
-        }
-        https.get("https://remote.craftos-pc.cc/new", res => {
-            if (Math.floor(res.statusCode / 100) !== 2) {
-                vscode.window.showErrorMessage("Could not connect to remote.craftos-pc.cc: HTTP " + res.statusCode);
-                res.resume();
+        globals_1.ext.context.subscriptions.push(this.panel);
+        this.panel.iconPath = vscode.Uri.file(path.join(globals_1.ext.context.extensionPath, this.isMonitor ? "media/monitor.svg" : "media/computer.svg"));
+        this.panel.webview.html = fs.readFileSync(path.join(globals_1.ext.context.extensionPath, "index.html"), "utf8");
+        this.panel.webview.onDidReceiveMessage((message) => {
+            if (typeof message !== "object")
+                return;
+            if (message.getFontPath === true) {
+                if (fontPath !== null && fontPath !== "")
+                    this.panel.webview.postMessage({
+                        fontPath: this.panel.webview.asWebviewUri(vscode.Uri.file(fontPath)).toString(),
+                    });
                 return;
             }
-            res.setEncoding('utf8');
-            let id = "";
-            res.on('data', chunk => id += chunk);
-            res.on('end', () => {
-                vscode.env.clipboard.writeText("wget run https://remote.craftos-pc.cc/server.lua " + id);
-                vscode.window.showInformationMessage("A command has been copied to the clipboard. Paste that into the ComputerCraft computer to establish the connection.");
-                connectToWebSocket("wss://remote.craftos-pc.cc/" + id);
-            });
-        }).on('error', e => {
-            if (e.message.match("certificate has expired"))
-                vscode.window.showErrorMessage("A bug in VS Code is causing the connection to fail. Please go to https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error to fix it.", "Open Page", "OK").then(res => {
-                    if (res === "OK") return;
-                    vscode.env.openExternal(vscode.Uri.parse("https://www.craftos-pc.cc/docs/remote#certificate-has-expired-error"));
-                });
-            else vscode.window.showErrorMessage("Could not connect to remote.craftos-pc.cc: " + e.message);
+            this.parent.send(packet_1.CraftPacketRaw.new({
+                type: message.type,
+                window: this.id,
+                data: Buffer.from(message.data, "hex"),
+            }));
         });
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-window', obj => {
-        if (typeof obj === "object") openPanel(parseInt(obj.id));
-        else vscode.window.showInputBox({prompt: "Enter the window ID:", validateInput: str => isNaN(parseInt(str)) ? "Invalid number" : null}).then(id => openPanel(parseInt(id)));
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-config', () => {
-        if (getDataPath() === null) {
-            vscode.window.showErrorMessage("Please set the path to the CraftOS-PC data directory manually.");
-            return;
-        }
-        vscode.commands.executeCommand("vscode.open", vscode.Uri.file(getDataPath() + "/config/global.json"));
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-computer-data', obj => {
-        if (getDataPath() === null) {
-            vscode.window.showErrorMessage("Please set the path to the CraftOS-PC data directory manually.");
-            return;
-        }
-        if (typeof obj === "object") {
-            vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(getDataPath() + "/computer/" + windows[parseInt(obj.id)].computerID), {forceNewWindow: true});
-        } else {
-            vscode.window.showInputBox({prompt: "Enter the computer ID:", validateInput: str => isNaN(parseInt(str)) ? "Invalid number" : null}).then(value => {
-                if (!fs.existsSync(getDataPath() + "/computer/" + value)) vscode.window.showErrorMessage("The computer ID provided does not exist.");
-                else vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(getDataPath() + "/computer/" + value));
-            });
-        }
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.open-remote-data', async obj => {
-        if (typeof obj !== "object") {
-            const value = parseInt(await vscode.window.showInputBox({prompt: "Enter the window ID:", validateInput: str => isNaN(parseInt(str)) ? "Invalid number" : null}));
-            if (typeof windows[value] !== "object") {
-                vscode.window.showErrorMessage("The window ID provided does not exist.");
-                return;
+        this.panel.onDidChangeViewState((e) => {
+            if (e.webviewPanel.active && this.term !== undefined) {
+                this.updateTerm({});
             }
-            obj = windows[value];
-        }
-        const connection = connections.get(parseInt(obj.id));
-        if (!connection || !connection.process_connection) {
-            vscode.window.showErrorMessage("Please open CraftOS-PC before using this command.");
-            return;
-        }
-        if (!connection.supportsFilesystem) {
-            vscode.window.showErrorMessage("This connection does not support file system access.");
-            return;
-        }
-        if (!vscode.workspace.workspaceFile) {
-            const opt = await vscode.window.showWarningMessage(
-                "Due to technical limitations, opening the computer data will cause the connection to close. Please restart the connection after running this. Are you sure you want to continue?",
-                "No", "Yes"
-            );
-            if (opt === "No") return;
-            closeAllWindows();
-        }
-        vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders.length : 0, null, {name: obj.title.replace(/^.*: */, ""), uri: vscode.Uri.parse(`craftos-pc://${obj.id}/`)});
-        vscode.window.showInformationMessage("Added remote folder to workspace.");
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand('craftos-pc.close', () => {
-        for (const connection of connections.values()) {
-            if (connection.process_connection) {
-                connection.sendRaw(connection.useBinaryChecksum ? "!CPC000CBAACAAAAAAAA2C7A548B\n" : "!CPC000CBAACAAAAAAAA3AB9B910\n", "utf8");
-            }
-        }
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand("craftos-pc.close-window", async obj => {
-        const id = parseInt(
-            typeof obj === "object"
-            ? obj.id
-            : await vscode.window.showInputBox({prompt: "Enter the window ID:", validateInput: str => isNaN(parseInt(str)) ? "Invalid number" : null})
-        );
-        const connection = connections.get(id);
-        if (!connection) {
-            vscode.window.showErrorMessage("Please open CraftOS-PC before using this command.");
-            return;
-        }
-        const data = Buffer.alloc(9);
-        data.fill(0);
-        data[0] = 4;
-        data[1] = 0;
-        data[2] = 1;
-        const b64 = data.toString("base64");
-        connection.sendRaw("!CPC000C" + b64 + ("0000000" + crc32(connection.useBinaryChecksum ? data.toString("binary") : b64).toString(16)).slice(-8) + "\n\n", "utf8");
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand("craftos-pc.kill", async obj => {
-        const id = parseInt(
-            typeof obj === "object"
-            ? obj.id
-            : await vscode.window.showInputBox({prompt: "Enter the window ID:", validateInput: str => isNaN(parseInt(str)) ? "Invalid number" : null})
-        );
-        const connection = connections.get(id);
-        if (!connection) {
-            vscode.window.showErrorMessage("Please open CraftOS-PC before using this command.");
-            return;
-        }
-        if (connection.process_connection && connection.process_connection.kill) {
-            connection.sendRaw(connection.useBinaryChecksum ? "!CPC000CBAACAAAAAAAA2C7A548B\n" : "!CPC000CBAACAAAAAAAA3AB9B910\n", "utf8");
-            connection.process_connection.kill(SIGINT);
-            connections.delete(id);
-        }
-    }));
-
-    context.subscriptions.push(vscode.commands.registerCommand("craftos-pc.run-file", path => {
-        if (!path) {
-            if (vscode.window.activeTextEditor === undefined || vscode.window.activeTextEditor.document.uri.scheme !== "file") {
-                vscode.window.showErrorMessage("Please open or save a file on disk before using this command.");
-                return;
-            }
-            path = vscode.window.activeTextEditor.document.uri.fsPath;
-        } else if (typeof path === "object" && path instanceof vscode.Uri) {
-            if (path.scheme !== "file") {
-                vscode.window.showErrorMessage("Please open or save a file on disk before using this command.");
-                return;
-            }
-            path = path.fsPath;
-        }
-        return connectToProcess(["--script", path]);
-    }));
-
-    context.subscriptions.push(vscode.workspace.registerFileSystemProvider("craftos-pc", new RawFileSystemProvider()));
-    context.subscriptions.push(vscode.window.registerUriHandler({handleUri: uri => {
-        vscode.commands.executeCommand("craftos-pc.open-websocket", uri.path.replace(/^\//, ""));
-    }}));
-
-    context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("craftos-pc", debugAdapterFactory));
-    
-    log = vscode.window.createOutputChannel("CraftOS-PC");
-
-    let change_timer = null;
-    vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration("craftos-pc.executablePath")) {
-            // Use a timer to debounce quick autosaves
-            if (change_timer !== null) clearTimeout(change_timer);
-            change_timer = setTimeout(() => {change_timer = null; checkVersion(false);}, 3000);
-        }
-    });
-
-    vscode.window.createTreeView("craftos-computers", {"treeDataProvider": computer_provider});
-    vscode.window.createTreeView("craftos-monitors", {"treeDataProvider": monitor_provider});
-
-    vsls.getApi(context.extension.id).then(api => {
-        if (api === null) return;
-        liveshare = api;
-        const updateSession = () => {
-            if (liveshare.session.role === vsls.Role.Host && vslsServer === null) {
-                if (vslsClient !== null && /*TODO*/ process_connection === null) {
-                    windows = {};
-                    computer_provider._onDidChangeTreeData.fire(null);
-                    monitor_provider._onDidChangeTreeData.fire(null);
-                    vslsClient = null;
-                }
-                liveshare.shareService("terminal").then(svc => {
-                    vslsServer = svc;
-                    vslsServer.onNotify("packet", data => {
-                        // TODO: Add actual access control (MicrosoftDocs/live-share#1716)
-                        const peer = liveshare.peers.find(a => a.peerNumber == data.peer);
-                        if (/*TODO*/ process_connection !== null && (peer.access === vsls.Access.ReadWrite || peer.access === vsls.Access.Owner)) /*TODO*/ process_connection.stdin.write(data.data, "utf8");
-                    });
-                    vslsServer.onNotify("get-windows", () => {
-                        vslsServer.notify("windows", windows);
-                        vslsServer.notify("flags", {/*TODO*/ isVersion11: /*TODO*/ isVersion11, /*TODO*/ useBinaryChecksum: /*TODO*/ useBinaryChecksum, /*TODO*/ supportsFilesystem: false});
-                    });
-                }).catch(err => vscode.window.showErrorMessage("Could not create Live Share service: " + err));
-            } else if (liveshare.session.role === vsls.Role.Guest && vslsClient === null) {
-                vslsServer = null;
-                liveshare.getSharedService("terminal").then(svc => {
-                    vslsClient = svc;
-                    vslsClient.onNotify("windows", param => {
-                        let newwindows = {};
-                        for (let id in param) newwindows[id] = {term: param[id].term, isMonitor: param[id].isMonitor, panel: windows[id] ? windows[id].panel : undefined};
-                        for (let id in windows) if (!newwindows[id] && windows[id].panel) windows[id].panel.dispose();
-                        windows = newwindows;
-                        computer_provider._onDidChangeTreeData.fire(null);
-                        monitor_provider._onDidChangeTreeData.fire(null);
-                    });
-                    vslsClient.onNotify("term", param => {
-                        windows[param.id].term = param.term
-                        if (windows[param.id].panel) {
-                            windows[param.id].panel.webview.postMessage(param.term);
-                            windows[param.id].panel.title = param.term.title || "CraftOS-PC Terminal";
-                        }
-                        if (param.refresh) {
-                            computer_provider._onDidChangeTreeData.fire(null);
-                            monitor_provider._onDidChangeTreeData.fire(null);
-                        }
-                    });
-                    vslsClient.onNotify("flags", param => {
-                        /*TODO*/ isVersion11 = param./*TODO*/ isVersion11;
-                        /*TODO*/ useBinaryChecksum = param./*TODO*/ useBinaryChecksum;
-                        /*TODO*/ supportsFilesystem = param./*TODO*/ supportsFilesystem;
-                    });
-                    /*TODO*/ process_connection = {
-                        connected: true,
-                        disconnect: () => {},
-                        kill: () => {},
-                        stdin: {write: data => {
-                            if (liveshare.session.access === vsls.Access.ReadWrite || liveshare.session.access === vsls.Access.Owner) vslsClient.notify("packet", {data: data, peer: liveshare.session.peerNumber});
-                        }}
-                    };
-                    vslsClient.notify("get-windows", {});
-                }).catch(err => vscode.window.showErrorMessage("Could not connect to Live Share service: " + err));
-            } else if (liveshare.session.role === vsls.Role.None) {
-                if (vslsClient !== null && /*TODO*/ process_connection !== null && /*TODO*/ process_connection.isLiveShare) {
-                    windows = {};
-                    computer_provider._onDidChangeTreeData.fire(null);
-                    monitor_provider._onDidChangeTreeData.fire(null);
-                    vslsClient = null;
-                    /*TODO*/ process_connection = null;
-                }
-                vslsServer = null;
-            }
-        };
-        liveshare.onDidChangeSession(updateSession);
-        liveshare.onDidChangePeers(() => {
-            if (vslsServer !== null) vslsServer.notify("windows", windows);
         });
-        if (liveshare.session.role !== vsls.Role.None) updateSession();
-    });
-
-    checkVersion(true);
-}
-exports.activate = activate;
-
-// this method is called when your extension is deactivated
-function deactivate() {
-    for (const connection of connections.values()) {
-        if (connection.process_connection) {
-            if (connection.isRemote) {
-                connection.sendRaw(connection.useBinaryChecksum ? "!CPC000CBAACAAAAAAAA2C7A548B\n" : "!CPC000CBAACAAAAAAAA3AB9B910\n", "utf8");
-                connection.process_connection.disconnect();
-            } else {
-                connection.process_connection.kill(SIGINT);
-            }
+        this.panel.onDidDispose(() => delete this.panel);
+        if (this.term) {
+            this.updateTerm({});
         }
     }
-    closeAllWindows();
+    close() {
+        this.panel.dispose();
+        delete this.panel;
+    }
+    updateTerm(term) {
+        const prevIsMonitor = this.isMonitor;
+        if ("title" in term) {
+            this.isMonitor = term.title.indexOf("Monitor") !== -1;
+            if (!this.isMonitor) {
+                const m = term.title.match(/Computer (\d+)$/);
+                if (m) {
+                    this.computerID = parseInt(m[1]);
+                }
+            }
+        }
+        if ("id" in term) {
+            if (term.id > 0) {
+                this.computerID = term.id - 1;
+                this.isMonitor = false;
+            }
+        }
+        if (prevIsMonitor !== this.isMonitor) {
+            this.emit('type_change', this.isMonitor);
+        }
+        if (!this.term)
+            this.term = {};
+        Object.assign(this.term, term);
+        if (this.panel) {
+            this.panel.webview.postMessage(this.term);
+            this.panel.title = this.term.title || "CraftOS-PC Terminal";
+        }
+    }
 }
+exports.CraftWindow = CraftWindow;
 
-module.exports = {
-    activate,
-    deactivate
-}
+
+/***/ }),
+
+/***/ "child_process":
+/*!********************************!*\
+  !*** external "child_process" ***!
+  \********************************/
+/***/ ((module) => {
+
+module.exports = require("child_process");
+
+/***/ }),
+
+/***/ "events":
+/*!*************************!*\
+  !*** external "events" ***!
+  \*************************/
+/***/ ((module) => {
+
+module.exports = require("events");
+
+/***/ }),
+
+/***/ "fs":
+/*!*********************!*\
+  !*** external "fs" ***!
+  \*********************/
+/***/ ((module) => {
+
+module.exports = require("fs");
+
+/***/ }),
+
+/***/ "https":
+/*!************************!*\
+  !*** external "https" ***!
+  \************************/
+/***/ ((module) => {
+
+module.exports = require("https");
+
+/***/ }),
+
+/***/ "os":
+/*!*********************!*\
+  !*** external "os" ***!
+  \*********************/
+/***/ ((module) => {
+
+module.exports = require("os");
+
+/***/ }),
+
+/***/ "path":
+/*!***********************!*\
+  !*** external "path" ***!
+  \***********************/
+/***/ ((module) => {
+
+module.exports = require("path");
+
+/***/ }),
+
+/***/ "vscode":
+/*!*************************!*\
+  !*** external "vscode" ***!
+  \*************************/
+/***/ ((module) => {
+
+module.exports = require("vscode");
+
+/***/ }),
+
+/***/ "ws":
+/*!*********************!*\
+  !*** external "ws" ***!
+  \*********************/
+/***/ ((module) => {
+
+module.exports = require("ws");
+
+/***/ })
+
+/******/ 	});
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	var __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	// This entry module is referenced by other modules so it can't be inlined
+/******/ 	var __webpack_exports__ = __webpack_require__("./src/index.ts");
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
+/******/ })()
+;
+//# sourceMappingURL=extension.js.map
