@@ -67,6 +67,14 @@
 				}
 			},
 			{
+				"command": "craftos-pc.detach",
+				"title": "CraftOS-PC: Detach Remote...",
+				"icon": {
+					"light": "media/remote-explorer-light.svg",
+					"dark": "media/remote-explorer-dark.svg"
+				}
+			},
+			{
 				"command": "craftos-pc.open-config",
 				"title": "CraftOS-PC: Open Configuration",
 				"icon": {
@@ -144,8 +152,8 @@
 		"menus": {
 			"view/item/context": [
 				{
-					"command": "craftos-pc.open-remote-data",
-					"when": "view == craftos-computers && viewItem == data-available",
+					"command": "craftos-pc.detach",
+					"when": "view == craftos-computers && viewItem == is-remote",
 					"group": "inline@1"
 				},
 				{
@@ -281,7 +289,8 @@
 	"scripts": {
 		"lint": "eslint .",
 		"pretest": "npm run lint",
-		"test": "node ./test/runTest.js"
+		"test": "node ./test/runTest.js",
+		"package": "webpack && vsce package"
 	},
 	"devDependencies": {
 		"@types/glob": "^7.1.1",

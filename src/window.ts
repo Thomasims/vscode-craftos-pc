@@ -78,7 +78,7 @@ export class CraftWindow extends EventEmitter {
 			(vscode.window.activeTextEditor && vscode.window.activeTextEditor.viewColumn) || vscode.ViewColumn.One,
 			{
 				enableScripts: true,
-				retainContextWhenHidden: true,
+				retainContextWhenHidden: false,
 				localResourceRoots:
 					fontPath !== null && fontPath !== ""
 						? [vscode.Uri.file(fontPath.replace(/[\/\\][^\/\\]*$/, ""))]
@@ -125,6 +125,7 @@ export class CraftWindow extends EventEmitter {
 
 	updateTerm(term: CraftPacketTerminalContents | CraftPacketTerminalChange | {}) {
 		const prevIsMonitor = this.isMonitor;
+		const prevTitle = this.panel?.title;
 		if ("title" in term) {
 			this.isMonitor = term.title.indexOf("Monitor") !== -1;
 			if (!this.isMonitor) {
@@ -140,14 +141,14 @@ export class CraftWindow extends EventEmitter {
 				this.isMonitor = false;
 			}
 		}
-		if (prevIsMonitor !== this.isMonitor) {
-			this.emit('type_change', this.isMonitor);
-		}
 		if (!this.term) this.term = {};
 		Object.assign(this.term, term);
 		if (this.panel) {
 			this.panel.webview.postMessage(this.term);
 			this.panel.title = this.term.title || "CraftOS-PC Terminal";
+		}
+		if (prevIsMonitor !== this.isMonitor || this.panel?.title !== prevTitle) {
+			this.emit('change');
 		}
 	}
 }

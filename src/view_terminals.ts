@@ -18,7 +18,7 @@ export class ComputerProvider extends vscode.EventEmitter<null> implements vscod
 			arguments: [element],
 		};
 		r.tooltip = element.globalID;
-		if (FindConnection(element.globalID)?.supportsFilesystem) r.contextValue = "data-available";
+		if (FindConnection(element.globalID)?.isRemote) r.contextValue = "is-remote";
 		return r;
 	}
 	getChildren(element?: WindowRef | undefined): vscode.ProviderResult<WindowRef[]> {
@@ -28,7 +28,7 @@ export class ComputerProvider extends vscode.EventEmitter<null> implements vscod
 				[...connection.windows.values()]
 					.filter((window) => !window.isMonitor)
 					.map((window) => ({
-						title: window.term?.title || "CraftOS-PC Computer",
+						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Computer",
 						globalID: `${window.id}@${connection.id}`,
 					}))
 			)
@@ -56,7 +56,7 @@ export class MonitorProvider extends vscode.EventEmitter<null> implements vscode
 				[...connection.windows.values()]
 					.filter((window) => window.isMonitor)
 					.map((window) => ({
-						title: window.term?.title || "CraftOS-PC Computer",
+						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Monitor",
 						globalID: `${window.id}@${connection.id}`,
 					}))
 			)

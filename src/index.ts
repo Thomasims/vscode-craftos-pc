@@ -1,5 +1,3 @@
-console.log("preimport");
-
 import * as vscode from "vscode";
 import { CraftConnection } from "./connection";
 import { FindConnection, FindWindow, ext } from "./globals";
@@ -14,6 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
 	ext.log = vscode.window.createOutputChannel("CraftOS-PC");
 	ext.computer_provider = new ComputerProvider();
 	ext.monitor_provider = new MonitorProvider();
+	ext.connections = new Map();
 	vscode.window.createTreeView("craftos-computers", { treeDataProvider: ext.computer_provider });
 	vscode.window.createTreeView("craftos-monitors", { treeDataProvider: ext.monitor_provider });
 
@@ -30,7 +29,7 @@ export function deactivate() {
 
 function connectToProcess(extraArgs?: string[]) {
 	const nextID = [...ext.connections.keys()].reduce(
-		(prev, id) => (id.startsWith("local-") ? Math.max(parseInt(id.substring(6)), prev) : prev),
+		(prev, id) => (id.startsWith("local-") ? Math.max(parseInt(id.substring(6)) + 1, prev) : prev),
 		0
 	);
 	if (nextID > 0) {
@@ -42,16 +41,18 @@ function connectToProcess(extraArgs?: string[]) {
 		ext.computer_provider.fire(null);
 		ext.monitor_provider.fire(null);
 	});
-	console.log(connection);
+	ext.computer_provider.fire(null);
+	ext.monitor_provider.fire(null);
 }
 
 function connectToWebSocket(url) {
-	const connection = CraftConnection.fromWebsocket("websocket", url);
+	const connection = CraftConnection.fromWebsocket(url, url);
 	connection.on("windows", () => {
 		ext.computer_provider.fire(null);
 		ext.monitor_provider.fire(null);
 	});
-	console.log(connection);
+	ext.computer_provider.fire(null);
+	ext.monitor_provider.fire(null);
 }
 
 commands["craftos-pc.open"] = () => connectToProcess();
@@ -94,6 +95,16 @@ commands["craftos-pc.open-websocket"] = async (url) => {
 	});
 	quickPick.show();
 };
+
+commands["craftos-pc.detach"] = (obj) => {
+	if (typeof obj === "object") return FindConnection(obj.globalID)?.detach();
+	vscode.window
+		.showInputBox({
+			prompt: "Enter the window ID:",
+			validateInput: (str) => (isNaN(parseInt(str)) ? "Invalid number" : null),
+		})
+		.then((id) => FindConnection(id)?.detach());
+}
 
 commands["craftos-pc.clear-history"] = () =>
 	ext.context.globalState.update("JackMacWindows.craftos-pc/websocket-history", [""]);
@@ -168,7 +179,7 @@ commands['craftos-pc.close'] = () => {
 
 commands["craftos-pc.close-window"] = async obj => {
 	const id = typeof obj === 'object' ? obj.globalID : await vscode.window.showInputBox({prompt: "Enter the window ID:"})
-	FindWindow(id)?.close();
+	FindConnection(id)?.removeWindow(parseInt(id));
 }
 
 commands["craftos-pc.kill"] = async obj => {

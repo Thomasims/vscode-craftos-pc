@@ -17,6 +17,7 @@ import { spawn } from "child_process";
 import * as vscode from "vscode";
 import WebSocket from "ws";
 import EventEmitter from "events";
+import { constants } from "os";
 
 interface CraftSocket {
 	write(data: string): void;
@@ -52,6 +53,10 @@ export class CraftConnection extends EventEmitter {
 		);
 	}
 
+	public detach() {
+		this.socket.disconnect();
+	}
+
 	public disconnect() {
 		this.send(CraftPacketTerminalChange.new({ type2: TerminalChangeType.QUIT }));
 		this.socket.disconnect();
@@ -77,23 +82,29 @@ export class CraftConnection extends EventEmitter {
 	public removeWindows() {
 		this.closeWindows();
 		this.windows.clear();
-		this.emit('windows');
+		this.emit("windows");
 		ext.connections.delete(this.id);
+		if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
 	}
 
 	public removeWindow(id: number) {
 		this.closeWindow(id);
+		this.send(CraftPacketTerminalChange.new({ type2: TerminalChangeType.CLOSE, window: id }));
 		this.windows.delete(id);
-		this.emit('windows');
+		this.emit("windows");
+		if (this.windows.size === 0) {
+			ext.connections.delete(this.id);
+			if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
+		}
 	}
 
 	private newWindow(id: number) {
 		if (!this.windows.has(id)) {
 			const window = new CraftWindow(this, id);
 			this.windows.set(id, window);
-			window.open();
-			window.on('type_change', () => this.emit('windows'));
-			this.emit('windows');
+			if (id === 0) window.open();
+			window.on("change", () => this.emit("windows"));
+			this.emit("windows");
 			return window;
 		}
 	}
@@ -313,7 +324,7 @@ export class CraftConnection extends EventEmitter {
 
 			connection.socket = {
 				disconnect: () => process.disconnect(),
-				kill: () => process.kill(),
+				kill: () => process.kill(constants.signals.SIGKILL),
 				write: (data) => process.stdin.write(data, "utf8"),
 			};
 		} catch (e) {

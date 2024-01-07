@@ -5,12 +5,10 @@ import { ComputerProvider, MonitorProvider } from "./view_terminals";
 export const ext: {
 	log?: vscode.OutputChannel;
 	context?: vscode.ExtensionContext;
-	connections: Map<string, CraftConnection>;
+	connections?: Map<string, CraftConnection>;
 	computer_provider?: ComputerProvider,
 	monitor_provider?: MonitorProvider,
-} = {
-	connections: new Map(),
-};
+} = {};
 
 export function FindConnection(globalID: string) {
 	const sep = globalID.indexOf("@");
