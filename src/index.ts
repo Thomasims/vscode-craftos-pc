@@ -1,20 +1,32 @@
 import * as vscode from "vscode";
 import { CraftConnection } from "./connection";
 import { FindConnection, FindWindow, ext } from "./globals";
-import { ComputerProvider, MonitorProvider } from "./view_terminals";
+import { ComputerProvider, MonitorProvider, WindowRef } from "./view_terminals";
 import https from "https";
 import { getDataPath } from "./utils";
+import { FileProvider } from "./view_explorer";
 
 const commands: Record<string, (...args: any[]) => any> = {};
+
+let computer_provider: ComputerProvider;
+let monitor_provider: MonitorProvider;
+let file_provider: FileProvider;
 
 export function activate(context: vscode.ExtensionContext) {
 	ext.context = context;
 	ext.log = vscode.window.createOutputChannel("CraftOS-PC");
-	ext.computer_provider = new ComputerProvider();
-	ext.monitor_provider = new MonitorProvider();
+	computer_provider = new ComputerProvider();
+	monitor_provider = new MonitorProvider();
+	file_provider = new FileProvider();
 	ext.connections = new Map();
-	vscode.window.createTreeView("craftos-computers", { treeDataProvider: ext.computer_provider });
-	vscode.window.createTreeView("craftos-monitors", { treeDataProvider: ext.monitor_provider });
+	vscode.window.createTreeView("craftos-computers", { treeDataProvider: computer_provider });
+	vscode.window.createTreeView("craftos-monitors", { treeDataProvider: monitor_provider });
+	vscode.window.createTreeView("craftos-files", {
+		treeDataProvider: file_provider,
+		dragAndDropController: file_provider,
+		canSelectMany: true,
+		showCollapseAll: true,
+	});
 
 	for (const name in commands) {
 		context.subscriptions.push(vscode.commands.registerCommand(name, commands[name]));
@@ -34,25 +46,33 @@ function connectToProcess(extraArgs?: string[]) {
 	);
 	if (nextID > 0) {
 		extraArgs = extraArgs || [];
-		extraArgs.push('--id', nextID.toFixed(0));
+		extraArgs.push("--id", nextID.toFixed(0));
 	}
 	const connection = CraftConnection.fromProcess("local-" + nextID, extraArgs);
 	connection.on("windows", () => {
-		ext.computer_provider.fire(null);
-		ext.monitor_provider.fire(null);
+		computer_provider.fire(null);
+		monitor_provider.fire(null);
 	});
-	ext.computer_provider.fire(null);
-	ext.monitor_provider.fire(null);
+	connection.on("close", () => {
+		file_provider.fire(null);
+	});
+	computer_provider.fire(null);
+	monitor_provider.fire(null);
+	file_provider.fire(null);
 }
 
 function connectToWebSocket(url) {
 	const connection = CraftConnection.fromWebsocket(url, url);
 	connection.on("windows", () => {
-		ext.computer_provider.fire(null);
-		ext.monitor_provider.fire(null);
+		computer_provider.fire(null);
+		monitor_provider.fire(null);
 	});
-	ext.computer_provider.fire(null);
-	ext.monitor_provider.fire(null);
+	connection.on("close", () => {
+		file_provider.fire(null);
+	});
+	computer_provider.fire(null);
+	monitor_provider.fire(null);
+	file_provider.fire(null);
 }
 
 commands["craftos-pc.open"] = () => connectToProcess();
@@ -96,15 +116,15 @@ commands["craftos-pc.open-websocket"] = async (url) => {
 	quickPick.show();
 };
 
-commands["craftos-pc.detach"] = (obj) => {
-	if (typeof obj === "object") return FindConnection(obj.globalID)?.detach();
+commands["craftos-pc.detach"] = (obj: WindowRef) => {
+	if (typeof obj === "object") return ext.connections.get(obj.connection)?.detach();
 	vscode.window
 		.showInputBox({
 			prompt: "Enter the window ID:",
 			validateInput: (str) => (isNaN(parseInt(str)) ? "Invalid number" : null),
 		})
 		.then((id) => FindConnection(id)?.detach());
-}
+};
 
 commands["craftos-pc.clear-history"] = () =>
 	ext.context.globalState.update("JackMacWindows.craftos-pc/websocket-history", [""]);
@@ -153,8 +173,8 @@ commands["craftos-pc.open-new-remote"] = () => {
 		});
 };
 
-commands["craftos-pc.open-window"] = (obj) => {
-	if (typeof obj === "object") return FindWindow(obj.globalID)?.open();
+commands["craftos-pc.open-window"] = (obj: WindowRef) => {
+	if (typeof obj === "object") return ext.connections.get(obj.connection)?.windows.get(obj.window)?.open();
 	vscode.window
 		.showInputBox({
 			prompt: "Enter the window ID:",
@@ -171,25 +191,30 @@ commands["craftos-pc.open-config"] = () => {
 	vscode.commands.executeCommand("vscode.open", vscode.Uri.file(getDataPath() + "/config/global.json"));
 };
 
-commands['craftos-pc.close'] = () => {
+commands["craftos-pc.close"] = () => {
 	for (const connection of ext.connections.values()) {
 		connection.disconnect();
 	}
-}
+};
 
-commands["craftos-pc.close-window"] = async obj => {
-	const id = typeof obj === 'object' ? obj.globalID : await vscode.window.showInputBox({prompt: "Enter the window ID:"})
+commands["craftos-pc.close-window"] = async (obj: WindowRef) => {
+	if (typeof obj === "object") return FindConnection(obj.connection)?.removeWindow(obj.window);
+	const id = await vscode.window.showInputBox({ prompt: "Enter the window ID:" });
 	FindConnection(id)?.removeWindow(parseInt(id));
-}
+};
 
-commands["craftos-pc.kill"] = async obj => {
-	const id = typeof obj === 'object' ? obj.globalID : await vscode.window.showInputBox({prompt: "Enter the window ID:"})
+commands["craftos-pc.kill"] = async (obj: WindowRef) => {
+	if (typeof obj === "object") return FindConnection(obj.connection)?.kill();
+	const id = await vscode.window.showInputBox({ prompt: "Enter the window ID:" });
 	FindConnection(id)?.kill();
-}
+};
 
-commands["craftos-pc.run-file"] = path => {
+commands["craftos-pc.run-file"] = (path) => {
 	if (!path) {
-		if (vscode.window.activeTextEditor === undefined || vscode.window.activeTextEditor.document.uri.scheme !== "file") {
+		if (
+			vscode.window.activeTextEditor === undefined ||
+			vscode.window.activeTextEditor.document.uri.scheme !== "file"
+		) {
 			vscode.window.showErrorMessage("Please open or save a file on disk before using this command.");
 			return;
 		}
@@ -202,4 +227,4 @@ commands["craftos-pc.run-file"] = path => {
 		path = path.fsPath;
 	}
 	return connectToProcess(["--script", path]);
-}
+};

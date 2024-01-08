@@ -42,6 +42,7 @@ export class CraftConnection extends EventEmitter {
 
 	constructor(public readonly id: string) {
 		super();
+		ext.connections.set(id, this);
 	}
 
 	public send(packet: CraftPacket) {
@@ -84,6 +85,7 @@ export class CraftConnection extends EventEmitter {
 		this.windows.clear();
 		this.emit("windows");
 		ext.connections.delete(this.id);
+		this.emit("close");
 		if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
 	}
 
@@ -94,6 +96,7 @@ export class CraftConnection extends EventEmitter {
 		this.emit("windows");
 		if (this.windows.size === 0) {
 			ext.connections.delete(this.id);
+			this.emit("close");
 			if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
 		}
 	}
@@ -260,17 +263,16 @@ export class CraftConnection extends EventEmitter {
 	public queueDataRequest(packet: CraftPacketFileRequest, data?: Buffer) {
 		const requestID = this.nextDataRequestID;
 		this.nextDataRequestID = (this.nextDataRequestID + 1) & 0xff;
-		const isWrite = (packet.type2 & 0xf1) === 0x11;
 		packet.id = requestID;
 		this.send(packet);
-		if (isWrite) {
-			this.send(CraftPacketFileData.new({ id: requestID, data, window: packet.window }));
+		if (packet.isWrite) {
+			this.send(CraftPacketFileData.new({ id: requestID, data, window: packet.window, isError: false }));
 		}
 		return new Promise<CraftPacketFileResponse | CraftPacketFileData>((resolve, reject) => {
 			const tid = setTimeout(() => {
 				this.dataRequestCallbacks.delete(requestID);
 				reject("Timeout");
-			});
+			}, 3000);
 			this.dataRequestCallbacks.set(requestID, (data, err) => {
 				clearTimeout(tid);
 				this.dataRequestCallbacks.delete(requestID);
@@ -284,7 +286,6 @@ export class CraftConnection extends EventEmitter {
 		const exePath = getExecutable();
 		if (!exePath) return null;
 		const connection = new CraftConnection(id);
-		ext.connections.set(id, connection);
 		connection.isRemote = false;
 		const args = ["--raw"];
 		const additionalArguments = getExtensionSetting("additionalArguments");
@@ -347,7 +348,6 @@ export class CraftConnection extends EventEmitter {
 
 	public static fromWebsocket(id: string, url: string) {
 		const connection = new CraftConnection(id);
-		ext.connections.set(id, connection);
 		connection.isRemote = true;
 		ext.log.appendLine("Connecting to: " + url);
 		const rawSocket = new WebSocket(url);

@@ -1,13 +1,10 @@
 import * as vscode from "vscode";
 import { CraftConnection } from "./connection";
-import { ComputerProvider, MonitorProvider } from "./view_terminals";
 
 export const ext: {
 	log?: vscode.OutputChannel;
 	context?: vscode.ExtensionContext;
 	connections?: Map<string, CraftConnection>;
-	computer_provider?: ComputerProvider,
-	monitor_provider?: MonitorProvider,
 } = {};
 
 export function FindConnection(globalID: string) {

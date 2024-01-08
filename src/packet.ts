@@ -412,7 +412,7 @@ export class CraftPacketFileRequest extends CraftPacket {
 		const buf = super.write();
 		let t = this.type2;
 		if (t === FileRequestType.OPEN) {
-			t |= (this.isWrite ? 1 : 0) | (this.isAppend ? 2 : 0) | (this.isBinary ? 4 : 0);
+			t = 16 | (this.isWrite ? 1 : 0) | (this.isAppend ? 2 : 0) | (this.isBinary ? 4 : 0);
 		}
 		buf[0x02] = t;
 		buf[0x03] = this.id;
@@ -559,7 +559,7 @@ export class CraftPacketFileData extends CraftPacket {
 		const buf = super.write();
 		buf[0x02] = this.isError ? 1 : 0;
 		buf[0x03] = this.id;
-		buf.writeUInt32LE(this.data.byteLength);
+		buf.writeUInt32LE(this.data.byteLength, 0x04);
 		this.data.copy(buf, 0x08);
 		return buf;
 	}

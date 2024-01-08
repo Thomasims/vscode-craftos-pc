@@ -2,9 +2,10 @@ import vscode from "vscode";
 import { FindConnection, ext } from "./globals";
 import path from "path";
 
-interface WindowRef {
+export interface WindowRef {
 	title: string;
-	globalID: string;
+	connection: string;
+	window: number;
 }
 
 export class ComputerProvider extends vscode.EventEmitter<null> implements vscode.TreeDataProvider<WindowRef> {
@@ -17,8 +18,8 @@ export class ComputerProvider extends vscode.EventEmitter<null> implements vscod
 			title: "CraftOS-PC: Open Window",
 			arguments: [element],
 		};
-		r.tooltip = element.globalID;
-		if (FindConnection(element.globalID)?.isRemote) r.contextValue = "is-remote";
+		r.tooltip = `${element.window}@${element.connection}`;
+		if (ext.connections.get(element.connection)?.isRemote) r.contextValue = "is-remote";
 		return r;
 	}
 	getChildren(element?: WindowRef | undefined): vscode.ProviderResult<WindowRef[]> {
@@ -29,7 +30,8 @@ export class ComputerProvider extends vscode.EventEmitter<null> implements vscod
 					.filter((window) => !window.isMonitor)
 					.map((window) => ({
 						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Computer",
-						globalID: `${window.id}@${connection.id}`,
+						connection: connection.id,
+						window: window.id,
 					}))
 			)
 			.flat(1);
@@ -46,7 +48,7 @@ export class MonitorProvider extends vscode.EventEmitter<null> implements vscode
 			title: "CraftOS-PC: Open Window",
 			arguments: [element],
 		};
-		r.tooltip = element.globalID;
+		r.tooltip = `${element.window}@${element.connection}`;
 		return r;
 	}
 	getChildren(element?: WindowRef | undefined): vscode.ProviderResult<WindowRef[]> {
@@ -57,7 +59,8 @@ export class MonitorProvider extends vscode.EventEmitter<null> implements vscode
 					.filter((window) => window.isMonitor)
 					.map((window) => ({
 						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Monitor",
-						globalID: `${window.id}@${connection.id}`,
+						connection: connection.id,
+						window: window.id,
 					}))
 			)
 			.flat(1);
