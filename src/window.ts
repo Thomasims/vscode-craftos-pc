@@ -57,10 +57,11 @@ export interface Term {
 }
 
 export class CraftWindow extends EventEmitter {
-	private panel: vscode.WebviewPanel;
+	public panel: vscode.WebviewPanel;
 	public isMonitor = false;
 	public computerID: number;
 	public term?: Partial<Term>;
+	public title = "CraftOS-PC Terminal";
 
 	constructor(public readonly parent: CraftConnection, public readonly id: number) {
 		super();
@@ -74,7 +75,7 @@ export class CraftWindow extends EventEmitter {
 		const fontPath = loadFont();
 		this.panel = vscode.window.createWebviewPanel(
 			"craftos-pc",
-			"CraftOS-PC Terminal",
+			this.title,
 			(vscode.window.activeTextEditor && vscode.window.activeTextEditor.viewColumn) || vscode.ViewColumn.One,
 			{
 				enableScripts: true,
@@ -119,7 +120,7 @@ export class CraftWindow extends EventEmitter {
 	}
 
 	close() {
-		this.panel.dispose();
+		this.panel?.dispose();
 		delete this.panel;
 	}
 
@@ -146,6 +147,7 @@ export class CraftWindow extends EventEmitter {
 		if (this.panel) {
 			this.panel.webview.postMessage(this.term);
 			this.panel.title = this.term.title || "CraftOS-PC Terminal";
+			this.title = this.panel.title.replace(/[^ ]+ (Remote )?Terminal: /, "$1")
 		}
 		if (prevIsMonitor !== this.isMonitor || this.panel?.title !== prevTitle) {
 			this.emit('change');

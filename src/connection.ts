@@ -9,10 +9,11 @@ import {
 	CraftPacketTerminalContents,
 	CraftPacketType,
 	CraftPacketVersionSupport,
+	FileRequestType,
 	TerminalChangeType,
 } from "./packet";
 import { crc32, getExecutable, getExtensionSetting } from "./utils";
-import { ext } from "./globals";
+import { RegisterConnection, UnregisterConnection, ext } from "./globals";
 import { spawn } from "child_process";
 import * as vscode from "vscode";
 import WebSocket from "ws";
@@ -27,6 +28,7 @@ interface CraftSocket {
 
 type DataRequestCallback = (data?: CraftPacketFileResponse | CraftPacketFileData, err?: string) => void;
 
+let nextUniqueID = 0;
 export class CraftConnection extends EventEmitter {
 	private socket: CraftSocket;
 	private dataContinuation?: Buffer;
@@ -40,9 +42,11 @@ export class CraftConnection extends EventEmitter {
 	public isVersion11 = false;
 	public isRemote = false;
 
+	public readonly uid = crc32(this.id);
+
 	constructor(public readonly id: string) {
 		super();
-		ext.connections.set(id, this);
+		RegisterConnection(this);
 	}
 
 	public send(packet: CraftPacket) {
@@ -84,7 +88,7 @@ export class CraftConnection extends EventEmitter {
 		this.closeWindows();
 		this.windows.clear();
 		this.emit("windows");
-		ext.connections.delete(this.id);
+		UnregisterConnection(this);
 		this.emit("close");
 		if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
 	}
@@ -95,7 +99,7 @@ export class CraftConnection extends EventEmitter {
 		this.windows.delete(id);
 		this.emit("windows");
 		if (this.windows.size === 0) {
-			ext.connections.delete(this.id);
+			UnregisterConnection(this);
 			this.emit("close");
 			if (!this.isRemote) setTimeout(() => this.socket.kill(), 2000);
 		}
@@ -260,7 +264,10 @@ export class CraftConnection extends EventEmitter {
 		else callback(packet);
 	}
 
-	public queueDataRequest(packet: CraftPacketFileRequest, data?: Buffer) {
+	private queueFilePacket(
+		packet: CraftPacketFileRequest,
+		data?: Buffer
+	): Promise<CraftPacketFileResponse | CraftPacketFileData> {
 		const requestID = this.nextDataRequestID;
 		this.nextDataRequestID = (this.nextDataRequestID + 1) & 0xff;
 		packet.id = requestID;
@@ -280,6 +287,37 @@ export class CraftConnection extends EventEmitter {
 				else reject(err);
 			});
 		});
+	}
+
+	public queueFileRequest(packet: CraftPacketFileRequest): Promise<CraftPacketFileResponse> {
+		return this.queueFilePacket(packet) as Promise<CraftPacketFileResponse>;
+	}
+
+	public queueFileWrite(
+		path: string,
+		data: Buffer,
+		isBinary?: boolean,
+		isAppend?: boolean
+	): Promise<CraftPacketFileResponse> {
+		return this.queueFilePacket(
+			CraftPacketFileRequest.new({
+				type2: FileRequestType.OPEN,
+				path,
+				isWrite: true,
+				isAppend,
+				isBinary,
+			}),
+			data
+		) as Promise<CraftPacketFileResponse>;
+	}
+
+	public queueFileRead(path: string): Promise<CraftPacketFileData> {
+		return this.queueFilePacket(
+			CraftPacketFileRequest.new({
+				type2: FileRequestType.OPEN,
+				path,
+			})
+		) as Promise<CraftPacketFileData>;
 	}
 
 	public static fromProcess(id: string, extraArgs?: string[]) {

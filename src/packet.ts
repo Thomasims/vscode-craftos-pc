@@ -456,8 +456,8 @@ export class CraftPacketFileResponse extends CraftPacket {
 
 	public attributes: {
 		size: number;
-		created: string;
-		modified: string;
+		created: number;
+		modified: number;
 		isDir: boolean;
 		isReadonly: boolean;
 	} | null;
@@ -516,8 +516,8 @@ export class CraftPacketFileResponse extends CraftPacket {
 			case FileRequestType.ATTRIBUTES:
 				if (buf[0x1a] === 0) {
 					const size = buf.readUInt32LE(0x04);
-					const created = buf.readBigUint64LE(0x08).toString();
-					const modified = buf.readBigUint64LE(0x10).toString();
+					const created = Number(buf.readBigUint64LE(0x08));
+					const modified = Number(buf.readBigUint64LE(0x10));
 					const isDir = !!buf[0x18];
 					const isReadonly = !!buf[0x19];
 					this.attributes = {

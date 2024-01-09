@@ -29,7 +29,7 @@ export class ComputerProvider extends vscode.EventEmitter<null> implements vscod
 				[...connection.windows.values()]
 					.filter((window) => !window.isMonitor)
 					.map((window) => ({
-						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Computer",
+						title: window.title || "Unknown Computer",
 						connection: connection.id,
 						window: window.id,
 					}))
@@ -58,7 +58,7 @@ export class MonitorProvider extends vscode.EventEmitter<null> implements vscode
 				[...connection.windows.values()]
 					.filter((window) => window.isMonitor)
 					.map((window) => ({
-						title: window.term?.title?.replace(/[^ ]+ (Remote )?Terminal: /, "$1") || "Unknown Monitor",
+						title: window.title || "Unknown Monitor",
 						connection: connection.id,
 						window: window.id,
 					}))

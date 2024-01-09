@@ -60,7 +60,7 @@
 			},
 			{
 				"command": "craftos-pc.open-remote-data",
-				"title": "CraftOS-PC: Open Remote Data for Window...",
+				"title": "CraftOS-PC: Add to workspace",
 				"icon": {
 					"light": "media/remote-explorer-light.svg",
 					"dark": "media/remote-explorer-dark.svg"
@@ -68,7 +68,7 @@
 			},
 			{
 				"command": "craftos-pc.detach",
-				"title": "CraftOS-PC: Detach Remote...",
+				"title": "CraftOS-PC: Detach Remote",
 				"icon": {
 					"light": "media/remote-explorer-light.svg",
 					"dark": "media/remote-explorer-dark.svg"
@@ -113,6 +113,40 @@
 					"light": "media/sidebar-icon-light.svg",
 					"dark": "media/sidebar-icon-dark.svg"
 				}
+			},
+			{
+				"command": "craftos-pc.file-new",
+				"title": "New File..."
+			},
+			{
+				"command": "craftos-pc.file-new-folder",
+				"title": "New Folder..."
+			},
+			{
+				"command": "craftos-pc.file-copy",
+				"title": "Copy",
+				"enablement": "false"
+			},
+			{
+				"command": "craftos-pc.file-paste",
+				"title": "Paste",
+				"enablement": "false"
+			},
+			{
+				"command": "craftos-pc.file-copy-path",
+				"title": "Copy Path"
+			},
+			{
+				"command": "craftos-pc.file-copy-uri",
+				"title": "Copy URI"
+			},
+			{
+				"command": "craftos-pc.file-rename",
+				"title": "Rename..."
+			},
+			{
+				"command": "craftos-pc.file-delete",
+				"title": "Delete"
 			}
 		],
 		"viewsContainers": {
@@ -139,7 +173,7 @@
 				{
 					"id": "craftos-files",
 					"name": "CraftOS Computers",
-					"_when": "craftos.computerCount > 0"
+					"when": "craftos.computerFSCount > 0"
 				}
 			]
 		},
@@ -160,6 +194,51 @@
 					"command": "craftos-pc.close-window",
 					"when": "view == craftos-computers || view == craftos-monitors",
 					"group": "inline@2"
+				},
+				{
+					"command": "craftos-pc.open-remote-data",
+					"when": "view == craftos-files && viewItem == is-computer",
+					"group": "inline@1"
+				},
+				{
+					"command": "craftos-pc.file-new",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-computer)",
+					"group": "files-group-1@1"
+				},
+				{
+					"command": "craftos-pc.file-new-folder",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-computer)",
+					"group": "files-group-1@2"
+				},
+				{
+					"command": "craftos-pc.file-copy",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-file)",
+					"group": "files-group-2@1"
+				},
+				{
+					"command": "craftos-pc.file-paste",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-computer)",
+					"group": "files-group-2@2"
+				},
+				{
+					"command": "craftos-pc.file-copy-path",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-file)",
+					"group": "files-group-3@1"
+				},
+				{
+					"command": "craftos-pc.file-copy-uri",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-file || viewItem == is-computer)",
+					"group": "files-group-3@2"
+				},
+				{
+					"command": "craftos-pc.file-rename",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-file)",
+					"group": "files-group-4@1"
+				},
+				{
+					"command": "craftos-pc.file-delete",
+					"when": "view == craftos-files && (viewItem == is-folder || viewItem == is-file)",
+					"group": "files-group-4@2"
 				}
 			],
 			"view/title": [
