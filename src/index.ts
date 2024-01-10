@@ -42,12 +42,24 @@ export function activate(context: vscode.ExtensionContext) {
 	for (const name in commands) {
 		context.subscriptions.push(vscode.commands.registerCommand(name, commands[name]));
 	}
+
+	vscode.window.registerWebviewPanelSerializer("craftos-pc", {
+		deserializeWebviewPanel: (panel, state: { connectionID: string; windowID: number }) => {
+			if (!state) return panel.dispose();
+			connectToID(state.connectionID, true).newWindow(state.windowID).open(panel);
+		},
+	});
+	restoreConnections();
+	const knownConnections = ext.context.workspaceState.get("connections") as string[];
+	if (knownConnections) knownConnections.forEach((connectionID) => connectToID(connectionID, true));
 }
 
-export function deactivate() {
+export function deactivate(closeWindows?: boolean) {
 	for (const connection of ext.connections.values()) {
+		if (!closeWindows) connection.windows.clear();
 		connection.kill();
 	}
+	ext.connections.clear();
 }
 
 function computerFSCount() {
@@ -58,34 +70,64 @@ function computerFSCount() {
 	return total;
 }
 
+function saveConnections() {
+	ext.context.globalState.update("savedConnections", [...ext.connections.keys()]);
+}
+
+function restoreConnections() {
+	const saved = ext.context.globalState.get("savedConnections") as string[];
+	if (saved) saved.forEach((connectionID) => connectToID(connectionID, true));
+}
+
 function updateViews() {
 	computer_provider.fire(null);
 	monitor_provider.fire(null);
 	file_provider.fire(null);
 
 	vscode.commands.executeCommand("setContext", "craftos.computerFSCount", computerFSCount());
+	ext.context.workspaceState.update("connections", [...ext.connections.keys()]);
 }
 
-function connectToProcess(extraArgs?: string[]) {
-	const nextID = [...ext.connections.keys()].reduce(
-		(prev, id) => (id.startsWith("local-") ? Math.max(parseInt(id.substring(6)) + 1, prev) : prev),
-		0
-	);
+function connectToID(id: string, keepClosed?: boolean) {
+	if (!ext.connections.has(id)) {
+		const localid = id.match(/^local-(\d+)$/);
+		if (localid) return connectToProcess([], parseInt(localid[1]), keepClosed);
+		else return connectToWebSocket(id, keepClosed);
+	}
+	return ext.connections.get(id);
+}
+
+function connectToProcess(extraArgs?: string[], id?: number, keepClosed?: boolean) {
+	let nextID = ext.connections.size;
+	if (id !== undefined) {
+		nextID = id;
+	} else {
+		for (let i = 0; i < ext.connections.size; i++) {
+			if (!ext.connections.has(`local-${i}`)) {
+				nextID = i;
+				break;
+			}
+		}
+	}
 	if (nextID > 0) {
 		extraArgs = extraArgs || [];
 		extraArgs.push("--id", nextID.toFixed(0));
 	}
-	const connection = CraftConnection.fromProcess("local-" + nextID, extraArgs);
+	const connection = CraftConnection.fromProcess("local-" + nextID, extraArgs, keepClosed);
 	connection.on("windows", () => updateViews());
 	connection.on("close", () => updateViews());
+	connection.on("version", () => updateViews());
 	updateViews();
+	return connection;
 }
 
-function connectToWebSocket(url) {
-	const connection = CraftConnection.fromWebsocket(url, url);
+function connectToWebSocket(url, keepClosed?: boolean) {
+	const connection = CraftConnection.fromWebsocket(url, url, keepClosed);
 	connection.on("windows", () => updateViews());
 	connection.on("close", () => updateViews());
+	connection.on("version", () => updateViews());
 	updateViews();
+	return connection;
 }
 
 commands["craftos-pc.open"] = () => connectToProcess();
@@ -255,19 +297,23 @@ commands["craftos-pc.open-remote-data"] = async (obj: CraftFile | WindowRef) => 
 		vscode.window.showErrorMessage("The connection does not support file access.");
 		return;
 	}
+	let cleanWindows = false;
 	if (!vscode.workspace.workspaceFile) {
 		const opt = await vscode.window.showWarningMessage(
-			"Due to technical limitations, opening the computer data will cause the connection to close. Please restart the connection after running this. Are you sure you want to continue?",
+			"Due to technical limitations, opening the computer data will cause the connection to restart and windows to close. Please reopen windows after running this. Are you sure you want to continue?",
 			"No",
 			"Yes"
 		);
 		if (opt === "No") return;
+		cleanWindows = true;
+		saveConnections(); // Try to reopen connections
 	}
 	vscode.workspace.updateWorkspaceFolders(
 		vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders.length : 0,
 		null,
 		{ name: connection.windows.get(0)?.title, uri: vscode.Uri.parse(`craftos-pc://${connection.uid}/`) }
 	);
+	if (cleanWindows) deactivate(true);
 };
 
 async function exists(uri: vscode.Uri) {

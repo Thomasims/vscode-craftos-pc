@@ -41,6 +41,10 @@ export class CraftConnection extends EventEmitter {
 	public supportsFilesystem = false;
 	public isVersion11 = false;
 	public isRemote = false;
+	public localInfo?: {
+		id: number,
+		script?: string,
+	};
 
 	public readonly uid = crc32(this.id);
 
@@ -80,8 +84,8 @@ export class CraftConnection extends EventEmitter {
 		this.windows.get(id)?.close();
 	}
 
-	public openWindow(id: number) {
-		this.windows.get(id)?.open();
+	public openWindow(id: number, oldPanel?: vscode.WebviewPanel) {
+		this.windows.get(id)?.open(oldPanel);
 	}
 
 	public removeWindows() {
@@ -105,15 +109,16 @@ export class CraftConnection extends EventEmitter {
 		}
 	}
 
-	private newWindow(id: number) {
+	public newWindow(id: number, keepClosed?: boolean) {
 		if (!this.windows.has(id)) {
 			const window = new CraftWindow(this, id);
 			this.windows.set(id, window);
-			if (id === 0) window.open();
+			if (id === 0 && !keepClosed) window.open();
 			window.on("change", () => this.emit("windows"));
 			this.emit("windows");
 			return window;
 		}
+		return this.windows.get(id);
 	}
 
 	private processChunk(chunk: Buffer | string) {
@@ -242,6 +247,7 @@ export class CraftConnection extends EventEmitter {
 		this.isVersion11 = true;
 		this.useBinaryChecksum = packet.binaryChecksum;
 		this.supportsFilesystem = packet.supportFilesystem;
+		this.emit("version");
 	}
 
 	private handleFileResponsePacket(packet: CraftPacketFileResponse) {
@@ -320,7 +326,7 @@ export class CraftConnection extends EventEmitter {
 		) as Promise<CraftPacketFileData>;
 	}
 
-	public static fromProcess(id: string, extraArgs?: string[]) {
+	public static fromProcess(id: string, extraArgs?: string[], keepClosed?: boolean) {
 		const exePath = getExecutable();
 		if (!exePath) return null;
 		const connection = new CraftConnection(id);
@@ -380,11 +386,11 @@ export class CraftConnection extends EventEmitter {
 			})
 		);
 		vscode.window.showInformationMessage("A new CraftOS-PC worker process has been started.");
-		connection.newWindow(0);
+		connection.newWindow(0, keepClosed);
 		return connection;
 	}
 
-	public static fromWebsocket(id: string, url: string) {
+	public static fromWebsocket(id: string, url: string, keepClosed?: boolean) {
 		const connection = new CraftConnection(id);
 		connection.isRemote = true;
 		ext.log.appendLine("Connecting to: " + url);
@@ -431,6 +437,7 @@ export class CraftConnection extends EventEmitter {
 		rawSocket.on("message", (data) =>
 			connection.processChunk(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data))
 		);
+		connection.newWindow(0, keepClosed);
 		return connection;
 	}
 }

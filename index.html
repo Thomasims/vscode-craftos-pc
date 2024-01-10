@@ -236,6 +236,9 @@
                     document.getElementById("font_img").src = term.fontPath;
                     return;
                 }
+                if (typeof term.connectionID !== "undefined") {
+                    vscode.setState(term);
+                }
                 if (term.palette === undefined || ctx == null || ctxdata == null || font == null) return;
                 lastMode = term.mode;
                 lastterm = term;

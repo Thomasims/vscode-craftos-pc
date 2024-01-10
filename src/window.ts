@@ -67,13 +67,13 @@ export class CraftWindow extends EventEmitter {
 		super();
 	}
 
-	open() {
+	open(oldPanel?: vscode.WebviewPanel) {
 		if (this.panel) {
 			this.panel.reveal();
 			return;
 		}
 		const fontPath = loadFont();
-		this.panel = vscode.window.createWebviewPanel(
+		this.panel = oldPanel || vscode.window.createWebviewPanel(
 			"craftos-pc",
 			this.title,
 			(vscode.window.activeTextEditor && vscode.window.activeTextEditor.viewColumn) || vscode.ViewColumn.One,
@@ -112,6 +112,10 @@ export class CraftWindow extends EventEmitter {
 			if (e.webviewPanel.active && this.term !== undefined) {
 				this.updateTerm({});
 			}
+			this.panel.webview.postMessage({
+				connectionID: this.parent.id,
+				windowID: this.id,
+			});
 		});
 		this.panel.onDidDispose(() => delete this.panel);
 		if (this.term) {
@@ -147,10 +151,10 @@ export class CraftWindow extends EventEmitter {
 		if (this.panel) {
 			this.panel.webview.postMessage(this.term);
 			this.panel.title = this.term.title || "CraftOS-PC Terminal";
-			this.title = this.panel.title.replace(/[^ ]+ (Remote )?Terminal: /, "$1")
+			this.title = this.panel.title.replace(/[^ ]+ (Remote )?Terminal: /, "$1");
 		}
 		if (prevIsMonitor !== this.isMonitor || this.panel?.title !== prevTitle) {
-			this.emit('change');
+			this.emit("change");
 		}
 	}
 }
